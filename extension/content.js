@@ -1,4 +1,87 @@
 // ============================================================
+// RAMON PACHECO ADVOCACIA - WhatsApp Web CRM v3
+// Testado com WhatsApp Business Web
+// Painel lateral flutuante - seletores confirmados
+// ============================================================
+
+const SUPABASE_URL = 'https://dgtoadxfwvkbefaacjfo.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRndG9hZHhmd3ZrYmVmYWFjamZvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDI0MjQ4MzAsImV4cCI6MjA1ODAwMDgzMH0.lHDmS9Z7v_9yrtqgGELRN6HKjL8YSoHZJoqBlE9yXbM';
+
+const COLS = [
+  { id: 'novo',         label: 'Leads',      color: '#3b82f6' },
+  { id: 'qualificando', label: 'Negociando', color: '#f59e0b' },
+  { id: 'proposta',     label: 'Proposta',   color: '#a855f7' },
+  { id: 'fechado',      label: 'Ganhou',     color: '#22c55e' },
+  { id: 'perdido',      label: 'Perdeu',     color: '#ef4444' },
+];
+
+let crmData = {};
+let isOpen = false;
+
+// ============================================================
+// SUPABASE
+// ============================================================
+async function sbGet(path) {
+  const r = await fetch(SUPABASE_URL + '/rest/v1' + path, {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+  });
+  return r.ok ? r.json() : [];
+}
+
+async function sbPatch(path, body) {
+  return fetch(SUPABASE_URL + '/rest/v1' + path, {
+    method: 'PATCH',
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+    body: JSON.stringify(body)
+  });
+}
+
+async function sbPost(path, body) {
+  const r = await fetch(SUPABASE_URL + '/rest/v1' + path, {
+    method: 'POST',
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json', 'Prefer': 'return=representation' },
+    body: JSON.stringify(body)
+  });
+  return r.ok ? r.json() : null;
+}
+
+async function sbDelete(path) {
+  return fetch(SUPABASE_URL + '/rest/v1' + path, {
+    method: 'DELETE',
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+  });
+}
+
+async function loadCRM() {
+  const rows = await sbGet('/contacts?select=*&order=created_at.desc');
+  crmData = {};
+  (rows || []).forEach(c => { crmData[c.id] = c; });
+}
+
+// ============================================================
+// READ WA CONTACTS FROM DOM (confirmed selectors)
+// ============================================================
+function getWAContacts() {
+  const out = [];
+  document.querySelectorAll('[data-testid="cell-frame-container"]').forEach(el => {
+    try {
+      const spans = Array.from(el.querySelectorAll('span[dir="auto"]'));
+      const name = spans[0]?.textContent?.trim() || spans[0]?.title || '';
+      const timeEl = el.querySelector('[data-testid="cell-frame-meta"] span') ||
+                     el.querySelector('span[class*="time"], span[class*="Time"]');
+      const unreadEl = el.querySelector('[data-testid="icon-unread-count"] span');
+      const msgSpans = el.querySelectorAll('span[dir="ltr"], span[dir="auto"]');
+      const lastMsg = msgSpans[1]?.textContent?.trim() || msgSpans[2]?.textContent?.trim() || '';
+      const img = el.querySelector('img[src]');
+      const time = timeEl?.textContent?.trim() || '';
+      const unread = parseInt(unreadEl?.textContent || '0') || 0;
+      if (name && name.length > 0) {
+        out.push({ name, time, unread, lastMsg, avatar: img?.src || null, el });
+      }
+    } catch(e) {}
+  });
+  return out;
+        }// ============================================================
 // RAMON PACHECO ADVOCACIA - WhatsApp Web CRM Extension v2
 // Estratégia: Painel flutuante sobre o WhatsApp Web
 // NÃO esconde conversas - injeta painel lateral sobre o WA
@@ -963,3 +1046,287 @@ function init() {
 }
 
 init();
+
+
+// ============================================================
+// BUILD PANEL HTML
+// ============================================================
+function buildPanel() {
+  const leads = Object.values(crmData);
+  const waContacts = getWAContacts();
+  const counts = {};
+  COLS.forEach(c => { counts[c.id] = leads.filter(l => l.status === c.id).length; });
+
+  let html = `<div id="crm-header">
+    <div id="crm-header-left">
+      <span>⚖️</span>
+      <div><div id="crm-title">CRM Leads</div><div id="crm-sub">${leads.length} lead${leads.length !== 1 ? 's' : ''}</div></div>
+    </div>
+    <div id="crm-hbtns">
+      <button id="crm-refresh" title="Atualizar">↻</button>
+      <button id="crm-close" title="Fechar">✕</button>
+    </div>
+  </div>
+  <div id="crm-tabs">
+    <div class="ct active" data-col="all" data-color="#00a884">Todos <span class="cb" style="background:#00a88422;color:#00a884">${leads.length}</span></div>
+    ${COLS.map(c => `<div class="ct" data-col="${c.id}" data-color="${c.color}">${c.label} <span class="cb" style="background:${c.color}22;color:${c.color}">${counts[c.id]||0}</span></div>`).join('')}
+  </div>
+  <div id="crm-search-wrap"><input id="crm-search" placeholder="🔍 Buscar..." /></div>
+  <div id="crm-list">`;
+
+  // CRM leads
+  if (leads.length === 0) {
+    html += `<div class="crm-empty"><div style="font-size:28px">📋</div><div>Sem leads ainda</div><div style="font-size:11px;margin-top:4px;color:#5a6d78">Clique em + para adicionar</div></div>`;
+  } else {
+    leads.forEach(lead => {
+      const col = COLS.find(c => c.id === lead.status) || { color: '#8696a0', label: '' };
+      const ini = (lead.name || '?')[0].toUpperCase();
+      const wa = waContacts.find(w => w.name.toLowerCase() === (lead.name || '').toLowerCase());
+      html += `<div class="cc" data-id="${lead.id}" data-status="${lead.status}" data-name="${(lead.name||'').replace(/"/g,'')}" >
+        <div class="cc-av" style="background:linear-gradient(135deg,${col.color}99,${col.color}44)">${ini}${wa&&wa.unread>0?`<span class="cc-badge">${wa.unread}</span>`:''}</div>
+        <div class="cc-body">
+          <div class="cc-r1"><span class="cc-name">${lead.name||''}</span><span class="cc-time">${wa?.time||''}</span></div>
+          <div class="cc-r2"><span class="cc-msg">${lead.service||wa?.lastMsg||''}</span><span class="cc-dot" style="background:${col.color}"></span></div>
+          <div class="cc-r3">
+            <select class="cc-sel" data-id="${lead.id}">${COLS.map(c=>`<option value="${c.id}"${lead.status===c.id?' selected':''}>${c.label}</option>`).join('')}</select>
+            ${lead.phone?`<button class="cc-wa" data-phone="${lead.phone}">💬</button>`:''}
+            <button class="cc-edit" data-id="${lead.id}">✏️</button>
+          </div>
+        </div>
+      </div>`;
+    });
+  }
+
+  // WA-only contacts (not in CRM yet)
+  const waOnly = waContacts.filter(w => !leads.some(l => l.name.toLowerCase() === w.name.toLowerCase())).slice(0,15);
+  if (waOnly.length > 0) {
+    html += `<div class="cs-label">WhatsApp (${waOnly.length})</div>`;
+    waOnly.forEach(w => {
+      const ini = (w.name||'?')[0].toUpperCase();
+      html += `<div class="cc cc-wa-only" data-waname="${(w.name||'').replace(/"/g,'')}">
+        <div class="cc-av" style="background:linear-gradient(135deg,#005c4b,#00a884)">${ini}${w.unread>0?`<span class="cc-badge">${w.unread}</span>`:''}</div>
+        <div class="cc-body">
+          <div class="cc-r1"><span class="cc-name">${w.name}</span><span class="cc-time">${w.time}</span></div>
+          <div class="cc-r2"><span class="cc-msg">${w.lastMsg}</span></div>
+          <div class="cc-r3"><button class="cc-addlead" data-name="${(w.name||'').replace(/"/g,'')}">+ Lead</button></div>
+        </div>
+      </div>`;
+    });
+  }
+
+  html += `</div><button id="crm-fab">+</button>`;
+  return html;
+}
+
+// ============================================================
+// ATTACH EVENTS
+// ============================================================
+function attachEvents(panel) {
+  // Tabs
+  panel.querySelectorAll('.ct').forEach(tab => {
+    tab.addEventListener('click', () => {
+      panel.querySelectorAll('.ct').forEach(t => { t.classList.remove('active'); t.style.borderBottomColor='transparent'; t.style.color='#8696a0'; });
+      tab.classList.add('active');
+      tab.style.borderBottomColor = tab.dataset.color;
+      tab.style.color = tab.dataset.color;
+      const col = tab.dataset.col;
+      panel.querySelectorAll('.cc').forEach(c => {
+        c.style.display = (col === 'all' || c.dataset.status === col) ? 'flex' : 'none';
+      });
+    });
+  });
+
+  // Search
+  panel.querySelector('#crm-search')?.addEventListener('input', e => {
+    const q = e.target.value.toLowerCase();
+    panel.querySelectorAll('.cc').forEach(c => {
+      const n = c.querySelector('.cc-name')?.textContent?.toLowerCase() || '';
+      c.style.display = n.includes(q) ? 'flex' : 'none';
+    });
+  });
+
+  // Close & Refresh
+  panel.querySelector('#crm-close')?.addEventListener('click', togglePanel);
+  panel.querySelector('#crm-refresh')?.addEventListener('click', async () => {
+    const b = panel.querySelector('#crm-refresh');
+    if(b) b.textContent='...';
+    await loadCRM();
+    rerender();
+    if(b) b.textContent='↻';
+  });
+
+  // Status selects
+  panel.querySelectorAll('.cc-sel').forEach(s => {
+    s.addEventListener('change', async e => {
+      e.stopPropagation();
+      const id = s.dataset.id;
+      const status = e.target.value;
+      await sbPatch('/contacts?id=eq.' + id, { status });
+      if (crmData[id]) crmData[id].status = status;
+      rerender();
+    });
+  });
+
+  // WA buttons
+  panel.querySelectorAll('.cc-wa[data-phone]').forEach(b => {
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      window.open('https://wa.me/' + b.dataset.phone.replace(/\D/g,''), '_blank');
+    });
+  });
+
+  // Edit buttons
+  panel.querySelectorAll('.cc-edit').forEach(b => {
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      const id = b.dataset.id;
+      showModal(crmData[id]);
+    });
+  });
+
+  // Add lead from WA contact
+  panel.querySelectorAll('.cc-addlead').forEach(b => {
+    b.addEventListener('click', e => {
+      e.stopPropagation();
+      showModal({ name: b.dataset.name, status: 'novo' });
+    });
+  });
+
+  // FAB
+  panel.querySelector('#crm-fab')?.addEventListener('click', () => showModal(null));
+
+  // Card click → open WA chat
+  panel.querySelectorAll('.cc').forEach(card => {
+    card.addEventListener('click', e => {
+      if (e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON' || e.target.closest('select') || e.target.closest('button')) return;
+      const name = card.dataset.name || card.dataset.waname || '';
+      if (!name) return;
+      // Find and click WA conversation item
+      document.querySelectorAll('[data-testid="cell-frame-container"]').forEach(item => {
+        const itemName = item.querySelector('span[dir="auto"]')?.textContent?.trim() || '';
+        if (itemName.toLowerCase() === name.toLowerCase()) item.click();
+      });
+    });
+  });
+}
+
+// ============================================================
+// MODAL
+// ============================================================
+function showModal(lead) {
+  document.getElementById('crm-modal-overlay')?.remove();
+  const ov = document.createElement('div');
+  ov.id = 'crm-modal-overlay';
+  ov.innerHTML = `<div id="crm-modal">
+    <div class="cm-hd"><span>${lead?.id ? 'Editar Lead':'Novo Lead'}</span><button id="cm-x">✕</button></div>
+    <div class="cm-bd">
+      <label>Nome *</label><input id="cm-name" value="${lead?.name||''}" placeholder="Nome completo" />
+      <label>WhatsApp</label><input id="cm-phone" value="${lead?.phone||''}" placeholder="+55 11 99999-9999" />
+      <label>Serviço</label><input id="cm-service" value="${lead?.service||''}" placeholder="Ex: Visto, Imigração..." />
+      <label>Etapa</label>
+      <select id="cm-status">${COLS.map(c=>`<option value="${c.id}"${(lead?.status||'novo')===c.id?' selected':''}>${c.label}</option>`).join('')}</select>
+      <label>Observações</label><textarea id="cm-notes">${lead?.notes||''}</textarea>
+    </div>
+    <div class="cm-ft">
+      ${lead?.id?`<button id="cm-del">🗑</button>`:''}
+      <button id="cm-cancel">Cancelar</button>
+      <button id="cm-save">💾 Salvar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+
+  const get = id => ov.querySelector(id);
+  get('#cm-x').onclick = get('#cm-cancel').onclick = () => ov.remove();
+
+  get('#cm-del')?.addEventListener('click', async () => {
+    if (!confirm('Excluir este lead?')) return;
+    await sbDelete('/contacts?id=eq.' + lead.id);
+    delete crmData[lead.id];
+    ov.remove(); rerender();
+  });
+
+  get('#cm-save').addEventListener('click', async () => {
+    const name = get('#cm-name').value.trim();
+    if (!name) { alert('Nome obrigatório!'); return; }
+    const phone = get('#cm-phone').value.trim();
+    const service = get('#cm-service').value.trim();
+    const status = get('#cm-status').value;
+    const notes = get('#cm-notes').value.trim();
+    const btn = get('#cm-save');
+    btn.textContent = '...'; btn.disabled = true;
+    if (lead?.id) {
+      await sbPatch('/contacts?id=eq.' + lead.id, { name, phone, service, status, notes });
+      crmData[lead.id] = { ...crmData[lead.id], name, phone, service, status, notes };
+    } else {
+      const rows = await sbPost('/contacts', { name, phone, service, status, notes });
+      if (rows?.[0]) crmData[rows[0].id] = rows[0];
+    }
+    ov.remove(); rerender();
+  });
+}
+
+// ============================================================
+// RENDER / TOGGLE
+// ============================================================
+let panelEl = null;
+
+function rerender() {
+  if (!panelEl || !document.contains(panelEl)) return;
+  panelEl.innerHTML = buildPanel();
+  attachEvents(panelEl);
+}
+
+function openPanel() {
+  if (panelEl && document.contains(panelEl)) return;
+  panelEl = document.createElement('div');
+  panelEl.id = 'crm-panel';
+  panelEl.innerHTML = `<div style="padding:40px;color:#8696a0;text-align:center">Carregando...</div>`;
+  document.body.appendChild(panelEl);
+  loadCRM().then(() => { panelEl.innerHTML = buildPanel(); attachEvents(panelEl); });
+  isOpen = true;
+}
+
+function closePanel() {
+  panelEl?.remove(); panelEl = null; isOpen = false;
+}
+
+function togglePanel() {
+  isOpen ? closePanel() : openPanel();
+}
+
+// ============================================================
+// INJECT TOGGLE BUTTON
+// ============================================================
+function injectButton() {
+  if (document.getElementById('crm-toggle-btn')) return;
+  const btn = document.createElement('button');
+  btn.id = 'crm-toggle-btn';
+  btn.title = 'Abrir CRM de Leads';
+  btn.textContent = '⚖️';
+  document.body.appendChild(btn);
+  btn.addEventListener('click', togglePanel);
+}
+
+// ============================================================
+// MESSAGE LISTENER
+// ============================================================
+chrome.runtime.onMessage.addListener(msg => {
+  if (msg.action === 'togglePanel') togglePanel();
+  if (msg.action === 'refreshLeads') loadCRM().then(() => { if(isOpen) rerender(); });
+});
+
+// ============================================================
+// INIT: inject button as soon as possible
+// ============================================================
+// Try immediately
+if (document.body) injectButton();
+
+// Also try after short delays (WA loads dynamically)
+setTimeout(injectButton, 1000);
+setTimeout(injectButton, 3000);
+setTimeout(injectButton, 6000);
+
+// Watch for body to be ready
+if (!document.body) {
+  document.addEventListener('DOMContentLoaded', injectButton);
+        }
