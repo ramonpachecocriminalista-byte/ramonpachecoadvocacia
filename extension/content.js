@@ -1,309 +1,399 @@
 // ============================================================
-// CRM Ramon Pacheco - Content Script para WhatsApp Web
+// RAMON PACHECO ADVOCACIA - WhatsApp Web CRM Extension
+// Transforma o WhatsApp Web em um CRM Kanban estilo Waleads
 // ============================================================
 
 const SUPABASE_URL = 'https://dgtoadxfwvkbefaacjfo.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRndG9hZHhmd3ZrYmVmYWFjamZvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDI0MjQ4MzAsImV4cCI6MjA1ODAwMDgzMH0.lHDmS9Z7v_9yrtqgGELRN6HKjL8YSoHZJoqBlE9yXbM';
 
-const KANBAN_STAGES = [
-  { id: 'novo', label: 'Lead Novo', color: '#3b82f6' },
-  { id: 'qualificando', label: 'Em Analise', color: '#f59e0b' },
-  { id: 'proposta', label: 'Proposta Enviada', color: '#8b5cf6' },
-  { id: 'fechado', label: 'Cliente Ativo', color: '#10b981' },
-  { id: 'perdido', label: 'Arquivado', color: '#6b7280' },
+const COLUMNS = [
+  { id: 'all',          label: 'Conversas', color: '#00a884', count: 0 },
+  { id: 'novo',         label: 'Leads',     color: '#3b82f6', count: 0 },
+  { id: 'qualificando', label: 'Negociando',color: '#f59e0b', count: 0 },
+  { id: 'fechado',      label: 'Ganhou',    color: '#22c55e', count: 0 },
+  { id: 'perdido',      label: 'Perdeu',    color: '#ef4444', count: 0 },
 ];
 
-let currentContact = null;
-let panelEl = null;
-let lastPhone = null;
+let crmData = {};          // phone -> { id, name, phone, status, service, notes }
+let currentView = 'kanban'; // 'kanban' | 'chat'
+let activeCol = 'all';
+let waContacts = [];       // list of {name, phone, lastMsg, time, avatar, unread}
+let isInjected = false;
+let originalPane = null;
 
-// ---- Supabase helpers ----
-async function sbFetch(path, opts = {}) {
-  const res = await fetch(SUPABASE_URL + path, {
-    ...opts,
+// ============================================================
+// SUPABASE API
+// ============================================================
+async function sbFetch(path, method = 'GET', body = null) {
+  const opts = {
+    method,
     headers: {
       'apikey': SUPABASE_KEY,
       'Authorization': 'Bearer ' + SUPABASE_KEY,
       'Content-Type': 'application/json',
-      'Prefer': opts.prefer || '',
-      ...(opts.headers || {}),
+      'Prefer': method === 'POST' ? 'return=representation' : 'return=minimal',
     },
-  });
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(SUPABASE_URL + '/rest/v1' + path, opts);
   if (res.status === 204) return null;
   return res.json();
 }
 
-async function getContact(phone) {
-  const clean = phone.replace(/\D/g, '');
-  const data = await sbFetch('/rest/v1/contacts?phone=ilike.*' + clean + '*&limit=1');
-  return data && data[0] ? data[0] : null;
+async function loadCRMData() {
+  try {
+    const data = await sbFetch('/contacts?select=*');
+    crmData = {};
+    (data || []).forEach(c => {
+      const key = (c.phone || '').replace(/\D/g, '');
+      if (key) crmData[key] = c;
+    });
+  } catch(e) { console.log('CRM load error', e); }
 }
 
-async function createContact(phone, name) {
-  const data = await sbFetch('/rest/v1/contacts', {
-    method: 'POST',
-    prefer: 'return=representation',
-    body: JSON.stringify({
-      name: name || phone,
-      phone: phone,
-      status: 'novo',
-      origin: 'WhatsApp Web',
-    }),
+async function upsertContact(phone, name, status, extra = {}) {
+  const cleanPhone = phone.replace(/\D/g, '');
+  const existing = crmData[cleanPhone];
+  try {
+    if (existing?.id) {
+      const updated = await sbFetch('/contacts?id=eq.' + existing.id, 'PATCH', { status, ...extra });
+      crmData[cleanPhone] = { ...existing, status, ...extra };
+    } else {
+      const created = await sbFetch('/contacts', 'POST', { name, phone: cleanPhone, status, ...extra });
+      if (created?.[0]) crmData[cleanPhone] = created[0];
+    }
+  } catch(e) { console.log('Upsert error', e); }
+        }
+
+// ============================================================
+// EXTRACT CONTACTS FROM WHATSAPP WEB DOM
+// ============================================================
+function extractContacts() {
+  const contacts = [];
+  // WhatsApp Web conversation list items
+  const items = document.querySelectorAll('[data-testid="cell-frame-container"], [data-testid="chat-list-item"]');
+  
+  items.forEach(item => {
+    try {
+      const nameEl = item.querySelector('[data-testid="cell-frame-title"] span, .zoWT4, ._21S-L span');
+      const msgEl  = item.querySelector('[data-testid="last-msg-status"] ~ span, .Yt29v span, ._2Ts6i');
+      const timeEl = item.querySelector('[data-testid="cell-frame-meta"] span, .Vistprakash, ._3j7s9');
+      const unreadEl = item.querySelector('[data-testid="icon-unread-count"] span, .unread-count, ._3fs0K');
+      const avatarEl = item.querySelector('img[src], [data-testid="default-user"]');
+
+      const name = nameEl?.textContent?.trim() || 'Desconhecido';
+      const lastMsg = msgEl?.textContent?.trim() || '';
+      const time = timeEl?.textContent?.trim() || '';
+      const unread = unreadEl?.textContent?.trim() || '0';
+      const avatar = avatarEl?.src || null;
+
+      // Try to get phone from various sources
+      let phone = '';
+      const titleAttr = item.querySelector('[title]');
+      if (titleAttr) phone = titleAttr.getAttribute('title') || '';
+
+      contacts.push({ name, phone, lastMsg, time, unread: parseInt(unread) || 0, avatar, el: item });
+    } catch(e) {}
   });
-  return data && data[0] ? data[0] : null;
+  
+  return contacts;
 }
 
-async function updateContact(id, updates) {
-  return sbFetch('/rest/v1/contacts?id=eq.' + id, {
-    method: 'PATCH',
-    prefer: 'return=representation',
-    body: JSON.stringify(updates),
+// ============================================================
+// BUILD KANBAN UI
+// ============================================================
+function buildKanbanView(container) {
+  container.innerHTML = '';
+  
+  // Update column counts
+  COLUMNS.forEach(col => {
+    if (col.id === 'all') {
+      col.count = waContacts.length;
+    } else {
+      col.count = waContacts.filter(c => {
+        const key = (c.phone || '').replace(/\D/g, '');
+        return crmData[key]?.status === col.id;
+      }).length;
+    }
   });
-}
 
-// ---- Extract current phone from WhatsApp Web ----
-function getCurrentPhone() {
-  // Try header with contact name/phone
-  const header = document.querySelector('[data-testid="conversation-header"]') ||
-    document.querySelector('header');
-  if (!header) return null;
+  // Tab bar (like Waleads top bar)
+  const tabBar = document.createElement('div');
+  tabBar.id = 'crm-tabbar';
+  tabBar.innerHTML = COLUMNS.map(col => `
+    <div class="crm-tab ${activeCol === col.id ? 'active' : ''}" data-col="${col.id}" style="border-bottom: 3px solid ${activeCol === col.id ? col.color : 'transparent'}; color: ${activeCol === col.id ? col.color : '#8696a0'}">
+      <span class="crm-tab-label">${col.label}</span>
+      <span class="crm-tab-count" style="background:${col.color}22; color:${col.color}">${col.count}</span>
+    </div>
+  `).join('');
+  container.appendChild(tabBar);
 
-  // Try to get the phone from the title or span
-  const spans = header.querySelectorAll('span');
-  for (const span of spans) {
-    const txt = span.textContent.trim();
-    if (/^[+]?[\d\s\-().]{8,}$/.test(txt)) return txt.replace(/\s/g, '');
+  // Tab click handlers
+  tabBar.querySelectorAll('.crm-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      activeCol = tab.dataset.col;
+      buildKanbanView(container);
+    });
+  });
+
+  // Filter contacts for active column
+  const filtered = activeCol === 'all'
+    ? waContacts
+    : waContacts.filter(c => {
+        const key = (c.phone || '').replace(/\D/g, '');
+        return crmData[key]?.status === activeCol;
+      });
+
+  // Contact cards grid
+  const grid = document.createElement('div');
+  grid.id = 'crm-grid';
+  
+  if (filtered.length === 0) {
+    grid.innerHTML = `<div class="crm-empty"><div style="font-size:32px;margin-bottom:8px">📭</div><div>Nenhum contato nesta coluna</div></div>`;
+  } else {
+    filtered.forEach(c => {
+      const key = (c.phone || '').replace(/\D/g, '');
+      const crm = crmData[key];
+      const status = crm?.status || 'none';
+      const col = COLUMNS.find(col => col.id === status);
+      
+      const card = document.createElement('div');
+      card.className = 'crm-card';
+      card.dataset.phone = c.phone;
+      card.dataset.name = c.name;
+      card.draggable = true;
+
+      const avatarHtml = c.avatar
+        ? `<img src="${c.avatar}" class="crm-avatar" />`
+        : `<div class="crm-avatar-placeholder">${(c.name||'?')[0].toUpperCase()}</div>`;
+
+      const statusDot = col ? `<span class="crm-status-dot" style="background:${col.color}"></span>` : '';
+      const unreadBadge = c.unread > 0 ? `<span class="crm-unread">${c.unread}</span>` : '';
+
+      card.innerHTML = `
+        <div class="crm-card-left">
+          <div class="crm-avatar-wrap">${avatarHtml}${unreadBadge}</div>
+        </div>
+        <div class="crm-card-body">
+          <div class="crm-card-top">
+            <span class="crm-card-name">${c.name}</span>
+            <span class="crm-card-time">${c.time}</span>
+          </div>
+          <div class="crm-card-bottom">
+            <span class="crm-card-msg">${c.lastMsg || ''}</span>
+            ${statusDot}
+          </div>
+          <div class="crm-card-tags">
+            <select class="crm-stage-select" data-phone="${c.phone}" data-name="${c.name}">
+              <option value="">— Etapa —</option>
+              ${COLUMNS.filter(cc => cc.id !== 'all').map(cc => `<option value="${cc.id}" ${status === cc.id ? 'selected' : ''}>${cc.label}</option>`).join('')}
+            </select>
+            ${crm?.service ? `<span class="crm-tag">${crm.service}</span>` : ''}
+          </div>
+        </div>
+        <div class="crm-card-actions">
+          <button class="crm-btn-chat" data-phone="${c.phone}" title="Abrir conversa">💬</button>
+        </div>
+      `;
+
+      // Stage change
+      card.querySelector('.crm-stage-select').addEventListener('change', async (e) => {
+        const newStatus = e.target.value;
+        if (!newStatus) return;
+        await upsertContact(c.phone, c.name, newStatus);
+        buildKanbanView(container);
+      });
+
+      // Open chat button
+      card.querySelector('.crm-btn-chat').addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Click the original WhatsApp conversation item
+        if (c.el) c.el.click();
+      });
+
+      // Card click to open chat
+      card.addEventListener('click', (e) => {
+        if (e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON' || e.target.closest('select') || e.target.closest('button')) return;
+        if (c.el) c.el.click();
+      });
+
+      grid.appendChild(card);
+    });
   }
+  
+  container.appendChild(grid);
 
-  // Try URL hash
-  const hash = window.location.hash;
-  const match = hash.match(/phone=([\d+]+)/);
-  if (match) return match[1];
+  // Floating action button
+  const fab = document.createElement('div');
+  fab.id = 'crm-fab';
+  fab.innerHTML = `
+    <button id="crm-fab-refresh" title="Atualizar leads">↻</button>
+    <button id="crm-fab-add" title="Novo lead">+</button>
+  `;
+  container.appendChild(fab);
 
-  return null;
+  fab.querySelector('#crm-fab-refresh').addEventListener('click', async () => {
+    await loadCRMData();
+    waContacts = extractContacts();
+    buildKanbanView(container);
+  });
+
+  fab.querySelector('#crm-fab-add').addEventListener('click', () => {
+    showAddLeadModal(container);
+  });
+        }
+
+// ============================================================
+// ADD LEAD MODAL
+// ============================================================
+function showAddLeadModal(container) {
+  const overlay = document.createElement('div');
+  overlay.id = 'crm-modal-overlay';
+  overlay.innerHTML = `
+    <div id="crm-modal">
+      <div class="crm-modal-header">
+        <span>Novo Lead</span>
+        <button id="crm-modal-close">✕</button>
+      </div>
+      <div class="crm-modal-body">
+        <label>Nome *</label>
+        <input id="crm-m-name" placeholder="Nome do contato" />
+        <label>WhatsApp</label>
+        <input id="crm-m-phone" placeholder="+55 11 99999-9999" />
+        <label>Serviço / Assunto</label>
+        <input id="crm-m-service" placeholder="Ex: Visto, Processo Criminal..." />
+        <label>Etapa</label>
+        <select id="crm-m-status">
+          ${COLUMNS.filter(c => c.id !== 'all').map(c => `<option value="${c.id}">${c.label}</option>`).join('')}
+        </select>
+        <label>Observações</label>
+        <textarea id="crm-m-notes" placeholder="Detalhes importantes..."></textarea>
+      </div>
+      <div class="crm-modal-footer">
+        <button id="crm-modal-cancel">Cancelar</button>
+        <button id="crm-modal-save">Salvar Lead</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.querySelector('#crm-modal-close').onclick = () => overlay.remove();
+  overlay.querySelector('#crm-modal-cancel').onclick = () => overlay.remove();
+  overlay.querySelector('#crm-modal-save').onclick = async () => {
+    const name = overlay.querySelector('#crm-m-name').value.trim();
+    const phone = overlay.querySelector('#crm-m-phone').value.trim();
+    const service = overlay.querySelector('#crm-m-service').value.trim();
+    const status = overlay.querySelector('#crm-m-status').value;
+    const notes = overlay.querySelector('#crm-m-notes').value.trim();
+    if (!name) { alert('Nome é obrigatório'); return; }
+    await upsertContact(phone || name, name, status, { service, notes });
+    overlay.remove();
+    await loadCRMData();
+    waContacts = extractContacts();
+    buildKanbanView(document.getElementById('crm-panel'));
+  };
 }
 
-function getContactName() {
-  const header = document.querySelector('[data-testid="conversation-header"]') ||
-    document.querySelector('header');
-  if (!header) return null;
-  const spans = header.querySelectorAll('span[title]');
-  for (const span of spans) {
-    const txt = span.getAttribute('title') || span.textContent.trim();
-    if (txt && txt.length > 1 && !/^[+\d\s\-().]+$/.test(txt)) return txt;
-  }
-  return null;
-}
+// ============================================================
+// INJECT KANBAN INTO WHATSAPP WEB
+// ============================================================
+function injectKanban() {
+  if (isInjected) return;
 
-// ---- Build the side panel ----
-function createPanel() {
+  // Find the left pane (conversation list)
+  const leftPane = document.querySelector('#pane-side') ||
+                   document.querySelector('[data-testid="chat-list"]')?.parentElement?.parentElement ||
+                   document.querySelector('div[style*="z-index: 100"]');
+  
+  if (!leftPane) return;
+
+  isInjected = true;
+
+  // Create our CRM panel to replace/overlay the conversation list
   const panel = document.createElement('div');
   panel.id = 'crm-panel';
-  panel.innerHTML = `
-    <div class="crm-header">
-      <span class="crm-logo">⚖️</span>
-      <span class="crm-title">CRM Advocacia</span>
-      <button class="crm-close" id="crm-close-btn">✕</button>
-    </div>
-    <div class="crm-body" id="crm-body">
-      <div class="crm-loading">Carregando...</div>
-    </div>
-  `;
-  document.body.appendChild(panel);
-  document.getElementById('crm-close-btn').onclick = togglePanel;
-  return panel;
-}
 
-function togglePanel() {
-  if (!panelEl) panelEl = createPanel();
-  const visible = panelEl.style.display !== 'none';
-  panelEl.style.display = visible ? 'none' : 'flex';
-}
+  // Insert after the header area, before the conversation list
+  const chatList = document.querySelector('[data-testid="chat-list"]') ||
+                   document.querySelector('#pane-side [role="grid"]') ||
+                   document.querySelector('[aria-label="Lista de conversas"]');
 
-function renderLoading() {
-  const body = document.getElementById('crm-body');
-  if (body) body.innerHTML = '<div class="crm-loading">Buscando contato...</div>';
-}
+  if (chatList) {
+    const parent = chatList.parentElement;
+    originalPane = chatList;
+    
+    // Hide original list, show ours
+    originalPane.style.display = 'none';
+    parent.appendChild(panel);
+  } else {
+    // Fallback: insert at bottom of left pane
+    leftPane.appendChild(panel);
+  }
 
-function renderContact(contact) {
-  const body = document.getElementById('crm-body');
-  if (!body) return;
-
-  const stage = KANBAN_STAGES.find(s => s.id === contact.status) || KANBAN_STAGES[0];
-
-  body.innerHTML = `
-    <div class="crm-contact-card">
-      <div class="crm-avatar">${(contact.name || '?')[0].toUpperCase()}</div>
-      <div class="crm-contact-info">
-        <div class="crm-contact-name">${contact.name || 'Sem nome'}</div>
-        <div class="crm-contact-phone">${contact.phone || ''}</div>
-      </div>
-    </div>
-
-    <div class="crm-stage-label">Status no Kanban</div>
-    <div class="crm-stages" id="crm-stages">
-      ${KANBAN_STAGES.map(s => `
-        <button class="crm-stage-btn ${s.id === contact.status ? 'active' : ''}"
-          data-stage="${s.id}"
-          style="border-color: ${s.id === contact.status ? s.color : '#2d3748'}; color: ${s.id === contact.status ? s.color : '#94a3b8'}">
-          ${s.label}
-        </button>
-      `).join('')}
-    </div>
-
-    <div class="crm-field">
-      <label>Servico / Assunto</label>
-      <input id="crm-service" value="${contact.service || ''}" placeholder="Ex: Visto, Criminal..." />
-    </div>
-
-    <div class="crm-field">
-      <label>Origem</label>
-      <input id="crm-origin" value="${contact.origin || 'WhatsApp Web'}" />
-    </div>
-
-    <div class="crm-field">
-      <label>Observacoes</label>
-      <textarea id="crm-notes" placeholder="Anotacoes...">${contact.notes || ''}</textarea>
-    </div>
-
-    <button class="crm-save-btn" id="crm-save-btn">Salvar alteracoes</button>
-
-    <a class="crm-link" href="https://escritorio-ramon.vercel.app" target="_blank">
-      Abrir sistema completo →
-    </a>
-  `;
-
-  // Stage buttons
-  document.querySelectorAll('.crm-stage-btn').forEach(btn => {
-    btn.onclick = async () => {
-      const newStage = btn.dataset.stage;
-      await updateContact(contact.id, { status: newStage });
-      contact.status = newStage;
-      renderContact(contact);
-    };
+  // Load data and render
+  loadCRMData().then(() => {
+    waContacts = extractContacts();
+    buildKanbanView(panel);
   });
 
-  // Save button
-  document.getElementById('crm-save-btn').onclick = async () => {
-    const service = document.getElementById('crm-service').value;
-    const origin = document.getElementById('crm-origin').value;
-    const notes = document.getElementById('crm-notes').value;
-    const btn = document.getElementById('crm-save-btn');
-    btn.textContent = 'Salvando...';
-    await updateContact(contact.id, { service, origin, notes });
-    btn.textContent = 'Salvo!';
-    setTimeout(() => { btn.textContent = 'Salvar alteracoes'; }, 2000);
-    contact.service = service;
-    contact.origin = origin;
-    contact.notes = notes;
-  };
-}
-
-function renderNewContact(phone, name) {
-  const body = document.getElementById('crm-body');
-  if (!body) return;
-
-  body.innerHTML = `
-    <div class="crm-new-badge">Contato novo</div>
-    <div class="crm-contact-card">
-      <div class="crm-avatar" style="background:#3b82f6">${(name || phone || '?')[0].toUpperCase()}</div>
-      <div class="crm-contact-info">
-        <div class="crm-contact-name">${name || 'Novo contato'}</div>
-        <div class="crm-contact-phone">${phone || ''}</div>
-      </div>
-    </div>
-
-    <div class="crm-field">
-      <label>Nome</label>
-      <input id="crm-new-name" value="${name || ''}" placeholder="Nome completo" />
-    </div>
-    <div class="crm-field">
-      <label>Servico / Assunto</label>
-      <input id="crm-new-service" placeholder="Ex: Visto, Criminal..." />
-    </div>
-    <div class="crm-field">
-      <label>Observacoes</label>
-      <textarea id="crm-new-notes" placeholder="Anotacoes iniciais..."></textarea>
-    </div>
-
-    <button class="crm-save-btn" id="crm-create-btn">+ Adicionar ao Kanban</button>
-  `;
-
-  document.getElementById('crm-create-btn').onclick = async () => {
-    const btn = document.getElementById('crm-create-btn');
-    btn.textContent = 'Criando...';
-    const newName = document.getElementById('crm-new-name').value || name || phone;
-    const service = document.getElementById('crm-new-service').value;
-    const notes = document.getElementById('crm-new-notes').value;
-    const contact = await createContact(phone, newName);
-    if (contact) {
-      if (service || notes) await updateContact(contact.id, { service, notes });
-      contact.service = service;
-      contact.notes = notes;
-      currentContact = contact;
-      renderContact(contact);
-    } else {
-      btn.textContent = 'Erro - tente novamente';
+  // Watch for WhatsApp loading more conversations
+  const observer = new MutationObserver(() => {
+    const newContacts = extractContacts();
+    if (newContacts.length !== waContacts.length) {
+      waContacts = newContacts;
+      buildKanbanView(panel);
     }
-  };
-}
+  });
 
-// ---- Watch for conversation changes ----
-async function onConversationChange() {
-  const phone = getCurrentPhone();
-  const name = getContactName();
-
-  if (!phone || phone === lastPhone) return;
-  lastPhone = phone;
-
-  if (!panelEl || panelEl.style.display === 'none') return;
-
-  renderLoading();
-
-  const contact = await getContact(phone);
-  if (contact) {
-    currentContact = contact;
-    renderContact(contact);
-  } else {
-    currentContact = null;
-    renderNewContact(phone, name);
+  if (chatList?.parentElement) {
+    observer.observe(chatList.parentElement, { childList: true, subtree: true });
   }
 }
 
-// ---- Inject FAB button ----
-function injectFAB() {
-  if (document.getElementById('crm-fab')) return;
-  const fab = document.createElement('button');
-  fab.id = 'crm-fab';
-  fab.innerHTML = '⚖️';
-  fab.title = 'Abrir CRM';
-  fab.onclick = async () => {
-    togglePanel();
-    if (panelEl && panelEl.style.display !== 'none') {
-      await onConversationChange();
+// ============================================================
+// TOGGLE: SHOW/HIDE KANBAN
+// ============================================================
+function toggleKanban() {
+  const panel = document.getElementById('crm-panel');
+  if (panel) {
+    // Remove panel, restore original
+    panel.remove();
+    if (originalPane) originalPane.style.display = '';
+    isInjected = false;
+  } else {
+    isInjected = false;
+    injectKanban();
+  }
+}
+
+// ============================================================
+// MESSAGE LISTENER (from popup)
+// ============================================================
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.action === 'togglePanel') toggleKanban();
+  if (msg.action === 'refreshLeads') {
+    loadCRMData().then(() => {
+      waContacts = extractContacts();
+      const panel = document.getElementById('crm-panel');
+      if (panel) buildKanbanView(panel);
+    });
+  }
+});
+
+// ============================================================
+// WAIT FOR WHATSAPP TO LOAD, THEN AUTO-INJECT
+// ============================================================
+function waitAndInject() {
+  const check = setInterval(() => {
+    const ready = document.querySelector('[data-testid="chat-list"]') ||
+                  document.querySelector('#pane-side') ||
+                  document.querySelector('[aria-label="Lista de conversas"]');
+    if (ready) {
+      clearInterval(check);
+      setTimeout(injectKanban, 1500);
     }
-  };
-  document.body.appendChild(fab);
+  }, 1000);
+  setTimeout(() => clearInterval(check), 30000); // stop after 30s
 }
 
-// ---- MutationObserver to detect conversation changes ----
-function startObserver() {
-  const observer = new MutationObserver(() => {content.js
-    injectFAB();
-    onConversationChange();
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
-}
-
-// ---- Init ----
-function init() {
-  injectFAB();
-  startObserver();
-  console.log('[CRM Advocacia] Extensao carregada no WhatsApp Web');
-}
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', init);
-} else {
-  setTimeout(init, 2000);
-}
+waitAndInject();
