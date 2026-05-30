@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 280px;
+      background: #1a1d2e;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', sans-serif;
+      padding: 20px;
+    }
+    .logo { font-size: 28px; text-align: center; margin-bottom: 8px; }
+    h1 { font-size: 14px; color: #a78bfa; text-align: center; margin-bottom: 4px; }
+    p { font-size: 12px; color: #718096; text-align: center; margin-bottom: 20px; }
+    .status {
+      background: #0f1117;
+      border: 1px solid #2d3748;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 14px;
+    }
+    .status-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .status-row:last-child { margin-bottom: 0; }
+    .status-label { font-size: 12px; color: #718096; }
+    .status-val { font-size: 12px; color: #10b981; font-weight: 600; }
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      text-align: center;
+      text-decoration: none;
+      margin-bottom: 8px;
+    }
+    .btn-primary { background: #7c3aed; color: white; }
+    .btn-ghost { background: #2d3748; color: #94a3b8; }
+    .tip {
+      background: #7c3aed11;
+      border: 1px solid #7c3aed33;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 11px;
+      color: #a78bfa;
+      margin-top: 12px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="logo">⚖️</div>
+  <h1>CRM Advocacia</h1>
+  <p>Ramon Pacheco Advocacia</p>
+
+  <div class="status">
+    <div class="status-row">
+      <span class="status-label">Status</span>
+      <span class="status-val">✅ Ativo</span>
+    </div>
+    <div class="status-row">
+      <span class="status-label">WhatsApp Web</span>
+      <span class="status-val" id="wa-status">Verificando...</span>
+    </div>
+  </div>
+
+  <a class="btn btn-primary" href="https://escritorio-ramon.vercel.app" target="_blank">
+    Abrir Sistema Completo
+  </a>
+
+  <button class="btn btn-ghost" id="toggle-panel">
+    Mostrar/Ocultar Painel
+  </button>
+
+  <div class="tip">
+    💡 Abra o WhatsApp Web e clique no botao <strong>⚖️</strong> que aparece no canto inferior direito para acessar o CRM.
+  </div>
+
+  <script>
+    // Check if WhatsApp Web tab is open
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs[0];
+      const isWA = tab && tab.url && tab.url.includes('web.whatsapp.com');
+      document.getElementById('wa-status').textContent = isWA ? '✅ Aberto' : '❌ Nao aberto';
+    });
+
+    // Toggle panel button
+    document.getElementById('toggle-panel').onclick = () => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0] && tabs[0].url && tabs[0].url.includes('web.whatsapp.com')) {
+          chrome.tabs.sendMessage(tabs[0].id, { action: 'togglePanel' });
+          window.close();
+        } else {
+          chrome.tabs.create({ url: 'https://web.whatsapp.com' });
+          window.close();
+        }
+      });
+    };
+  </script>
+</body>
+</html>
