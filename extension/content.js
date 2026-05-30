@@ -1,4 +1,183 @@
 // ============================================================
+// RAMON PACHECO ADVOCACIA - WhatsApp CRM v4
+// MODO KANBAN HORIZONTAL - igual ao Waleads
+// Transforma a tela do WhatsApp em colunas Kanban
+// ============================================================
+
+const SUPABASE_URL = 'https://dgtoadxfwvkbefaacjfo.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRndG9hZHhmd3ZrYmVmYWFjamZvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDI0MjQ4MzAsImV4cCI6MjA1ODAwMDgzMH0.lHDmS9Z7v_9yrtqgGELRN6HKjL8YSoHZJoqBlE9yXbM';
+
+const COLS = [
+  { id: 'all',          label: 'Todas',     color: '#00a884', emoji: '💬' },
+  { id: 'novo',         label: 'Leads',     color: '#3b82f6', emoji: '🔵' },
+  { id: 'qualificando', label: 'Negociando',color: '#f59e0b', emoji: '🟡' },
+  { id: 'proposta',     label: 'Proposta',  color: '#a855f7', emoji: '🟣' },
+  { id: 'fechado',      label: 'Ganhou',    color: '#22c55e', emoji: '🟢' },
+  { id: 'perdido',      label: 'Perdeu',    color: '#ef4444', emoji: '🔴' },
+];
+
+let crmData = {};      // id -> contact
+let waContacts = [];   // [{name, time, unread, lastMsg, avatar, el}]
+let activeCol = 'all'; // current tab
+let kanbanMode = false; // true = kanban horizontal, false = single column
+let injected = false;
+let observer = null;
+
+// ============================================================
+// SUPABASE
+// ============================================================
+async function sbFetch(path, opts = {}) {
+  const r = await fetch(SUPABASE_URL + '/rest/v1' + path, {
+    ...opts,
+    headers: {
+      'apikey': SUPABASE_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'Content-Type': 'application/json',
+      ...(opts.method === 'POST' ? { 'Prefer': 'return=representation' } : {}),
+      ...opts.headers,
+    }
+  });
+  if (r.status === 204 || r.status === 200 && opts.method === 'DELETE') return null;
+  try { return await r.json(); } catch { return null; }
+}
+
+async function loadCRM() {
+  const rows = await sbFetch('/contacts?select=*&order=created_at.desc') || [];
+  crmData = {};
+  rows.forEach(c => { crmData[c.id] = c; });
+}
+
+async function patchContact(id, data) {
+  await sbFetch('/contacts?id=eq.' + id, { method: 'PATCH', body: JSON.stringify(data) });
+  if (crmData[id]) Object.assign(crmData[id], data);
+}
+
+async function createContact(data) {
+  const rows = await sbFetch('/contacts', { method: 'POST', body: JSON.stringify(data) });
+  if (rows?.[0]) crmData[rows[0].id] = rows[0];
+  return rows?.[0];
+}
+
+async function deleteContact(id) {
+  await sbFetch('/contacts?id=eq.' + id, { method: 'DELETE' });
+  delete crmData[id];
+}
+
+// ============================================================
+// EXTRACT WA CONTACTS FROM DOM
+// ============================================================
+function readWAContacts() {
+  const out = [];
+  document.querySelectorAll('[data-testid="cell-frame-container"]').forEach(el => {
+    try {
+      const nameEl = el.querySelector('span[dir="auto"]');
+      const name = nameEl?.textContent?.trim() || '';
+      if (!name) return;
+      const timeEl = el.querySelector('[data-testid="cell-frame-meta"] span, ._3j7s9');
+      const unreadEl = el.querySelector('[data-testid="icon-unread-count"] span');
+      const msgEl = el.querySelectorAll('span[dir="ltr"]')[0] || el.querySelectorAll('span[dir="auto"]')[1];
+      const img = el.querySelector('img[src]');
+      out.push({
+        name,
+        time: timeEl?.textContent?.trim() || '',
+        unread: parseInt(unreadEl?.textContent || 0) || 0,
+        lastMsg: msgEl?.textContent?.trim() || '',
+        avatar: img?.src || null,
+        el,
+      });
+    } catch(e) {}
+  });
+  return out;
+}
+
+// ============================================================
+// FIND CRM DATA FOR A WA CONTACT
+// ============================================================
+function findCRM(waName) {
+  const n = (waName || '').toLowerCase().trim();
+  return Object.values(crmData).find(c =>
+    (c.name || '').toLowerCase().trim() === n ||
+    (c.phone && waName.includes(c.phone.replace(/\D/g,'')))
+  ) || null;
+}
+
+// ============================================================
+// BUILD A SINGLE CONTACT CARD
+// ============================================================
+function makeCard(wa, crm) {
+  const col = COLS.find(c => c.id === (crm?.status)) || null;
+  const ini = (wa?.name || crm?.name || '?')[0].toUpperCase();
+  const name = wa?.name || crm?.name || '';
+  const time = wa?.time || '';
+  const unread = wa?.unread || 0;
+  const msg = crm?.service || wa?.lastMsg || '';
+  const status = crm?.status || '';
+
+  const div = document.createElement('div');
+  div.className = 'wcrm-card';
+  div.dataset.name = name;
+  div.dataset.status = status;
+  div.dataset.crmid = crm?.id || '';
+
+  div.innerHTML = `
+    <div class="wcrm-av" style="background:linear-gradient(135deg,${col ? col.color+'99' : '#005c4b'},${col ? col.color+'44' : '#00a884'})">
+      ${ini}
+      ${unread > 0 ? `<span class="wcrm-badge">${unread}</span>` : ''}
+    </div>
+    <div class="wcrm-body">
+      <div class="wcrm-row1">
+        <span class="wcrm-name">${name}</span>
+        <span class="wcrm-time">${time}</span>
+      </div>
+      <div class="wcrm-row2">
+        <span class="wcrm-msg">${msg}</span>
+        ${col ? `<span class="wcrm-dot" style="background:${col.color}" title="${col.label}"></span>` : ''}
+      </div>
+      <div class="wcrm-row3">
+        <select class="wcrm-sel" data-name="${name}" data-crmid="${crm?.id || ''}">
+          <option value="">— Etapa —</option>
+          ${COLS.filter(c=>c.id!=='all').map(c => `<option value="${c.id}" ${status===c.id?'selected':''}>${c.emoji} ${c.label}</option>`).join('')}
+        </select>
+        ${!crm ? `<button class="wcrm-add" data-name="${name}">+ Lead</button>` : ''}
+        ${crm ? `<button class="wcrm-edit" data-id="${crm.id}">✏️</button>` : ''}
+      </div>
+    </div>
+  `;
+
+  // Click card → open WA chat
+  div.addEventListener('click', e => {
+    if (e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON' || e.target.closest('select,button')) return;
+    if (wa?.el) wa.el.click();
+  });
+
+  // Stage select
+  div.querySelector('.wcrm-sel').addEventListener('change', async e => {
+    e.stopPropagation();
+    const newStatus = e.target.value;
+    if (!newStatus) return;
+    if (crm?.id) {
+      await patchContact(crm.id, { status: newStatus });
+    } else {
+      const created = await createContact({ name, phone: '', status: newStatus });
+      if (created) div.dataset.crmid = created.id;
+    }
+    refresh();
+  });
+
+  // Add as lead
+  div.querySelector('.wcrm-add')?.addEventListener('click', e => {
+    e.stopPropagation();
+    showModal({ name: e.target.dataset.name, status: 'novo' });
+  });
+
+  // Edit
+  div.querySelector('.wcrm-edit')?.addEventListener('click', e => {
+    e.stopPropagation();
+    showModal(crmData[e.target.dataset.id]);
+  });
+
+  return div;
+}// ============================================================
 // RAMON PACHECO ADVOCACIA - WhatsApp Web CRM v3
 // Testado com WhatsApp Business Web
 // Painel lateral flutuante - seletores confirmados
@@ -1330,3 +1509,336 @@ setTimeout(injectButton, 6000);
 if (!document.body) {
   document.addEventListener('DOMContentLoaded', injectButton);
         }
+
+
+// ============================================================
+// BUILD KANBAN VIEW (horizontal columns)
+// ============================================================
+function buildKanban() {
+  waContacts = readWAContacts();
+  const leads = Object.values(crmData);
+
+  // Map WA contacts to CRM
+  const pairs = waContacts.map(wa => ({ wa, crm: findCRM(wa.name) }));
+
+  // Also add CRM leads not in WA currently
+  const waNames = waContacts.map(w => w.name.toLowerCase().trim());
+  const crmOnly = leads.filter(c => !waNames.includes((c.name||'').toLowerCase().trim()));
+
+  const container = document.getElementById('wcrm-kanban');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const cols = COLS.filter(c => c.id !== 'all');
+
+  cols.forEach(col => {
+    const colEl = document.createElement('div');
+    colEl.className = 'wcrm-col';
+    colEl.dataset.col = col.id;
+
+    // Filter: WA contacts in this stage + CRM-only in this stage
+    const colPairs = pairs.filter(p => (p.crm?.status || '') === col.id);
+    const colCrmOnly = crmOnly.filter(c => c.status === col.id);
+    const total = colPairs.length + colCrmOnly.length;
+
+    colEl.innerHTML = `<div class="wcrm-col-hd" style="border-bottom-color:${col.color}">
+      <span class="wcrm-col-dot" style="background:${col.color}"></span>
+      <span class="wcrm-col-label">${col.label}</span>
+      <span class="wcrm-col-count" style="background:${col.color}22;color:${col.color}">${total}</span>
+    </div>
+    <div class="wcrm-col-body"></div>`;
+
+    const body = colEl.querySelector('.wcrm-col-body');
+    colPairs.forEach(p => body.appendChild(makeCard(p.wa, p.crm)));
+    colCrmOnly.forEach(c => body.appendChild(makeCard(null, c)));
+
+    if (total === 0) {
+      body.innerHTML = `<div class="wcrm-empty">Nenhum lead</div>`;
+    }
+
+    container.appendChild(colEl);
+  });
+}
+
+// ============================================================
+// BUILD SINGLE COLUMN VIEW (tab filter mode)
+// ============================================================
+function buildSingleCol() {
+  waContacts = readWAContacts();
+  const leads = Object.values(crmData);
+  const pairs = waContacts.map(wa => ({ wa, crm: findCRM(wa.name) }));
+  const waNames = waContacts.map(w => w.name.toLowerCase().trim());
+  const crmOnly = leads.filter(c => !waNames.includes((c.name||'').toLowerCase().trim()));
+
+  const list = document.getElementById('wcrm-list');
+  if (!list) return;
+  list.innerHTML = '';
+
+  let shown = 0;
+
+  pairs.forEach(p => {
+    if (activeCol !== 'all' && (p.crm?.status || '') !== activeCol) return;
+    list.appendChild(makeCard(p.wa, p.crm));
+    shown++;
+  });
+
+  if (activeCol !== 'all') {
+    crmOnly.filter(c => c.status === activeCol).forEach(c => {
+      list.appendChild(makeCard(null, c));
+      shown++;
+    });
+  }
+
+  if (shown === 0) {
+    list.innerHTML = `<div class="wcrm-empty-full"><div style="font-size:28px;margin-bottom:8px">📭</div><div>Nenhum contato nesta etapa</div></div>`;
+  }
+}
+
+// ============================================================
+// MAIN REFRESH
+// ============================================================
+function refresh() {
+  updateTabCounts();
+  if (kanbanMode) {
+    buildKanban();
+  } else {
+    buildSingleCol();
+  }
+}
+
+function updateTabCounts() {
+  waContacts = readWAContacts();
+  const leads = Object.values(crmData);
+  const pairs = waContacts.map(wa => ({ wa, crm: findCRM(wa.name) }));
+  const waNames = waContacts.map(w => w.name.toLowerCase().trim());
+  const crmOnly = leads.filter(c => !waNames.includes((c.name||'').toLowerCase().trim()));
+
+  COLS.forEach(col => {
+    const tab = document.querySelector(`.wcrm-tab[data-col="${col.id}"]`);
+    if (!tab) return;
+    let count = 0;
+    if (col.id === 'all') {
+      count = waContacts.length;
+    } else {
+      count = pairs.filter(p => p.crm?.status === col.id).length +
+              crmOnly.filter(c => c.status === col.id).length;
+    }
+    const badge = tab.querySelector('.wcrm-tab-badge');
+    if (badge) { badge.textContent = count; badge.style.color = col.color; badge.style.background = col.color + '22'; }
+  });
+}
+
+// ============================================================
+// INJECT INTO WHATSAPP DOM
+// ============================================================
+function inject() {
+  if (injected) return;
+  if (document.getElementById('wcrm-root')) return;
+
+  // Find pane-side (left panel)
+  const paneEl = document.getElementById('pane-side');
+  if (!paneEl) return;
+
+  injected = true;
+
+  // Create our root container inside pane-side
+  const root = document.createElement('div');
+  root.id = 'wcrm-root';
+
+  // Tab bar
+  root.innerHTML = `
+    <div id="wcrm-topbar">
+      <div id="wcrm-tabs">
+        ${COLS.map(col => `
+          <div class="wcrm-tab ${activeCol === col.id ? 'wcrm-tab-active' : ''}"
+               data-col="${col.id}"
+               style="${activeCol === col.id ? 'border-bottom:3px solid ' + col.color + ';color:' + col.color : ''}">
+            ${col.label}
+            <span class="wcrm-tab-badge">0</span>
+          </div>
+        `).join('')}
+      </div>
+      <div id="wcrm-topbtns">
+        <button id="wcrm-toggle-mode" title="Alternar Kanban">⊞</button>
+        <button id="wcrm-btn-add" title="Novo lead">+</button>
+        <button id="wcrm-btn-refresh" title="Atualizar">↻</button>
+      </div>
+    </div>
+    <div id="wcrm-search-wrap">
+      <input id="wcrm-search" placeholder="🔍 Buscar contato..." />
+    </div>
+    <div id="wcrm-list"></div>
+    <div id="wcrm-kanban" style="display:none"></div>
+  `;
+
+  // Insert at top of pane-side (before chat list)
+  paneEl.insertBefore(root, paneEl.firstChild);
+
+  // ---- TAB CLICKS ----
+  root.querySelectorAll('.wcrm-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      activeCol = tab.dataset.col;
+      root.querySelectorAll('.wcrm-tab').forEach(t => {
+        t.classList.remove('wcrm-tab-active');
+        t.style.borderBottom = 'none';
+        const col = COLS.find(c => c.id === t.dataset.col);
+        t.style.color = '#8696a0';
+      });
+      tab.classList.add('wcrm-tab-active');
+      const col = COLS.find(c => c.id === activeCol);
+      tab.style.borderBottom = '3px solid ' + (col?.color || '#00a884');
+      tab.style.color = col?.color || '#00a884';
+      
+      // If kanban mode, switch to single column and exit kanban
+      if (kanbanMode) {
+        kanbanMode = false;
+        document.getElementById('wcrm-kanban').style.display = 'none';
+        document.getElementById('wcrm-list').style.display = 'block';
+        document.getElementById('wcrm-toggle-mode').style.background = 'transparent';
+      }
+      refresh();
+    });
+  });
+
+  // ---- KANBAN TOGGLE ----
+  root.querySelector('#wcrm-toggle-mode').addEventListener('click', () => {
+    kanbanMode = !kanbanMode;
+    const kanbanEl = document.getElementById('wcrm-kanban');
+    const listEl = document.getElementById('wcrm-list');
+    const btn = document.getElementById('wcrm-toggle-mode');
+    if (kanbanMode) {
+      listEl.style.display = 'none';
+      kanbanEl.style.display = 'flex';
+      btn.style.background = '#00a88422';
+      btn.style.color = '#00a884';
+      // Expand pane for kanban
+      paneEl.style.width = '100vw';
+      paneEl.style.maxWidth = '100vw';
+      document.getElementById('app').style.display = 'flex';
+    } else {
+      listEl.style.display = 'block';
+      kanbanEl.style.display = 'none';
+      btn.style.background = 'transparent';
+      btn.style.color = '#8696a0';
+      // Restore pane width
+      paneEl.style.width = '';
+      paneEl.style.maxWidth = '';
+    }
+    refresh();
+  });
+
+  // ---- ADD BUTTON ----
+  root.querySelector('#wcrm-btn-add').addEventListener('click', () => showModal(null));
+
+  // ---- REFRESH BUTTON ----
+  root.querySelector('#wcrm-btn-refresh').addEventListener('click', async () => {
+    const btn = root.querySelector('#wcrm-btn-refresh');
+    btn.textContent = '...';
+    await loadCRM();
+    refresh();
+    btn.textContent = '↻';
+  });
+
+  // ---- SEARCH ----
+  root.querySelector('#wcrm-search').addEventListener('input', e => {
+    const q = e.target.value.toLowerCase();
+    document.querySelectorAll('.wcrm-card').forEach(c => {
+      const n = c.dataset.name?.toLowerCase() || '';
+      c.style.display = n.includes(q) ? 'flex' : 'none';
+    });
+  });
+
+  // Observer to keep refreshing as WA loads more chats
+  if (observer) observer.disconnect();
+  observer = new MutationObserver(() => {
+    waContacts = readWAContacts();
+    updateTabCounts();
+    if (!kanbanMode) buildSingleCol();
+  });
+  const chatList = paneEl.querySelector('[data-testid="chat-list"]');
+  if (chatList) {
+    observer.observe(chatList, { childList: true, subtree: false });
+  }
+
+  // Initial render
+  loadCRM().then(() => refresh());
+}
+
+// ============================================================
+// MODAL
+// ============================================================
+function showModal(lead) {
+  document.getElementById('wcrm-modal-ov')?.remove();
+  const ov = document.createElement('div');
+  ov.id = 'wcrm-modal-ov';
+  ov.innerHTML = `<div id="wcrm-modal">
+    <div class="wm-hd"><b>${lead?.id ? 'Editar Lead' : 'Novo Lead'}</b><button id="wm-x">✕</button></div>
+    <div class="wm-bd">
+      <label>Nome *</label><input id="wm-name" value="${lead?.name||''}" placeholder="Nome completo" />
+      <label>WhatsApp</label><input id="wm-phone" value="${lead?.phone||''}" placeholder="+55 11 99999-9999" />
+      <label>Serviço / Assunto</label><input id="wm-svc" value="${lead?.service||''}" placeholder="Ex: Visto, Processo..." />
+      <label>Etapa</label>
+      <select id="wm-status">${COLS.filter(c=>c.id!=='all').map(c=>`<option value="${c.id}" ${(lead?.status||'novo')===c.id?'selected':''}>${c.emoji} ${c.label}</option>`).join('')}</select>
+      <label>Observações</label>
+      <textarea id="wm-notes">${lead?.notes||''}</textarea>
+    </div>
+    <div class="wm-ft">
+      ${lead?.id ? `<button id="wm-del">🗑 Excluir</button>` : ''}
+      <button id="wm-cancel">Cancelar</button>
+      <button id="wm-save">💾 Salvar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+
+  const g = id => ov.querySelector(id);
+  g('#wm-x').onclick = g('#wm-cancel').onclick = () => ov.remove();
+
+  g('#wm-del')?.addEventListener('click', async () => {
+    if (!confirm('Excluir?')) return;
+    await deleteContact(lead.id);
+    ov.remove(); refresh();
+  });
+
+  g('#wm-save').addEventListener('click', async () => {
+    const name = g('#wm-name').value.trim();
+    if (!name) { alert('Nome obrigatório'); return; }
+    const data = { name, phone: g('#wm-phone').value.trim(), service: g('#wm-svc').value.trim(), status: g('#wm-status').value, notes: g('#wm-notes').value.trim() };
+    const btn = g('#wm-save'); btn.textContent = '...'; btn.disabled = true;
+    if (lead?.id) await patchContact(lead.id, data);
+    else await createContact(data);
+    ov.remove(); refresh();
+  });
+}
+
+// ============================================================
+// CHROME MESSAGES
+// ============================================================
+chrome.runtime.onMessage.addListener(msg => {
+  if (msg.action === 'togglePanel') {
+    const root = document.getElementById('wcrm-root');
+    if (root) { injected = false; root.remove(); if(observer) observer.disconnect(); }
+    else inject();
+  }
+  if (msg.action === 'refreshLeads') loadCRM().then(refresh);
+});
+
+// ============================================================
+// INIT: inject when pane-side is ready
+// ============================================================
+function tryInject() {
+  if (document.getElementById('pane-side')) {
+    inject();
+  }
+}
+
+// Try multiple times with increasing delays
+[500, 1500, 3000, 5000, 8000].forEach(ms => setTimeout(tryInject, ms));
+
+// Also watch for DOM changes
+const initObs = new MutationObserver(() => {
+  if (document.getElementById('pane-side') && !injected) {
+    inject();
+    initObs.disconnect();
+  }
+});
+initObs.observe(document.body, { childList: true, subtree: true });
