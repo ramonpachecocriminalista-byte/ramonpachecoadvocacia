@@ -1,20 +1,23 @@
 {
-  "manifest_version": 3,
-  "name": "CRM Ramon Pacheco Advocacia",
-  "version": "1.0",
-  "description": "CRM integrado ao WhatsApp Web - Escritorio Ramon Pacheco",
-  "permissions": ["storage", "activeTab"],
-  "host_permissions": ["https://web.whatsapp.com/*"],
-  "content_scripts": [
-    {
-      "matches": ["https://web.whatsapp.com/*"],
-      "js": ["content.js"],
-      "css": ["styles.css"],
-      "run_at": "document_idle"
+    "manifest_version": 3,
+    "name": "CRM Ramon Pacheco Advocacia",
+    "version": "2.0.0",
+    "description": "CRM completo integrado ao WhatsApp Web - Funil, Chats, Agenda, Automação e Relatórios",
+    "permissions": ["storage", "activeTab", "tabs", "alarms", "notifications"],
+    "host_permissions": ["https://web.whatsapp.com/*"],
+    "content_scripts": [
+          {
+                  "matches": ["https://web.whatsapp.com/*"],
+                  "js": ["content.js"],
+                  "css": ["styles.css"],
+                  "run_at": "document_idle"
+          }
+    ],
+    "action": {
+          "default_popup": "popup.html",
+          "default_title": "CRM Advocacia"
+    },
+    "background": {
+          "service_worker": "background.js"
     }
-  ],
-  "action": {
-    "default_popup": "popup.html",
-    "default_title": "CRM Advocacia"
-  }
 }
