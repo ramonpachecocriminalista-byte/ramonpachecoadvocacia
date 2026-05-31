@@ -6,7 +6,7 @@
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  width: 300px;
+  width: 280px;
   background: #111b21;
   color: #e9edef;
   font-family: 'Segoe UI', sans-serif;
@@ -14,134 +14,113 @@ body {
 }
 .header {
   background: linear-gradient(135deg, #1a3c34, #25D366);
-  padding: 18px;
+  padding: 16px;
   display: flex;
   align-items: center;
   gap: 12px;
 }
-.header-icon {
-  width: 40px; height: 40px;
-  border-radius: 10px;
-  background: rgba(255,255,255,0.2);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 22px;
+.header-icon { font-size: 26px; }
+.header-text h1 { font-size: 15px; font-weight: 700; color: #fff; }
+.header-text p { font-size: 11px; color: rgba(255,255,255,0.7); margin-top: 2px; }
+.section {
+  padding: 16px;
+  border-bottom: 1px solid #2a3942;
 }
-.header-title { font-size: 15px; font-weight: 700; color: white; }
-.header-sub { font-size: 11px; color: rgba(255,255,255,0.75); margin-top: 2px; }
-.section { padding: 14px 16px; border-bottom: 1px solid #1e2d35; }
-.section-label {
-  font-size: 10px; font-weight: 700; color: #8696a0;
-  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px;
+.section h2 {
+  font-size: 11px;
+  color: #8696a0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 10px;
+  font-weight: 600;
 }
-.status-row { display: flex; align-items: center; gap: 8px; }
-.status-dot {
-  width: 8px; height: 8px; border-radius: 50%; background: #25D366;
-  animation: pulse 2s infinite;
-}
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-.status-text { font-size: 12px; color: #25D366; font-weight: 600; }
 .btn {
-  width: 100%; padding: 11px; border-radius: 10px; border: none;
-  cursor: pointer; font-size: 13px; font-weight: 700;
-  display: flex; align-items: center; justify-content: center; gap: 8px;
-  transition: all 0.2s; margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  background: #25D366;
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.2s;
+  margin-bottom: 8px;
 }
-.btn-primary { background: #25D366; color: white; }
-.btn-primary:hover { background: #1da851; }
-.btn-secondary { background: #1f2c34; color: #8696a0; border: 1px solid #2a3942; }
-.btn-secondary:hover { background: #243440; color: #e9edef; }
-.nav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.nav-btn {
-  background: #1f2c34; border: 1px solid #2a3942;
-  border-radius: 10px; padding: 12px 8px;
-  cursor: pointer; color: #8696a0; font-size: 11px;
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  transition: all 0.2s;
+.btn:hover { background: #1da851; }
+.btn-secondary {
+  background: #2a3942;
+  color: #e9edef;
 }
-.nav-btn:hover { background: #243440; color: #25D366; border-color: #25D36644; }
-.nav-btn .icon { font-size: 18px; }
-.info-box {
-  background: #1f2c34; border: 1px solid #2a3942;
-  border-radius: 10px; padding: 10px 12px;
-  font-size: 11px; color: #8696a0; line-height: 1.6;
+.btn-secondary:hover { background: #3d4a52; }
+.btn-icon { font-size: 16px; }
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 12px;
+  color: #8696a0;
 }
-.info-box strong { color: #25D366; }
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #25D366;
+  flex-shrink: 0;
+}
+.footer {
+  padding: 12px 16px;
+  text-align: center;
+  font-size: 10px;
+  color: #3d4a52;
+}
 </style>
 </head>
 <body>
 
 <div class="header">
   <div class="header-icon">⚖️</div>
-  <div>
-    <div class="header-title">CRM Advocacia</div>
-    <div class="header-sub">Ramon Pacheco - Escritório</div>
+  <div class="header-text">
+    <h1>CRM Advocacia</h1>
+    <p>Chat + Funil de Leads</p>
   </div>
 </div>
 
 <div class="section">
-  <div class="section-label">Status</div>
+  <h2>Acesso Rápido</h2>
+  <a class="btn" href="https://web.whatsapp.com" target="_blank">
+    <span class="btn-icon">💬</span>
+    Abrir WhatsApp Web
+  </a>
+</div>
+
+<div class="section">
+  <h2>Status da Extensão</h2>
   <div class="status-row">
     <div class="status-dot"></div>
-    <span class="status-text" id="status-text">Verificando...</span>
+    <span>Painel CRM ativo no WhatsApp Web</span>
+  </div>
+  <div class="status-row" style="color:#e9edef;font-size:11px;margin-top:4px;line-height:1.5;padding:8px;background:#182229;border-radius:6px">
+    <span>💡 Acesse o WhatsApp Web para usar o painel de Chat e Funil Kanban diretamente na conversa.</span>
   </div>
 </div>
 
 <div class="section">
-  <div class="section-label">Painel CRM</div>
-  <button class="btn btn-primary" id="btn-toggle">
-    <span>📋</span> Mostrar / Ocultar CRM
-  </button>
-</div>
-
-<div class="section">
-  <div class="section-label">Navegar Para</div>
-  <div class="nav-grid">
-    <button class="nav-btn" data-view="funnel">
-      <span class="icon">📋</span><span>Funil</span>
-    </button>
-    <button class="nav-btn" data-view="chats">
-      <span class="icon">💬</span><span>Chats</span>
-    </button>
-    <button class="nav-btn" data-view="agenda">
-      <span class="icon">📅</span><span>Agenda</span>
-    </button>
-    <button class="nav-btn" data-view="automation">
-      <span class="icon">⚡</span><span>Automação</span>
-    </button>
-    <button class="nav-btn" data-view="reports">
-      <span class="icon">📊</span><span>Relatórios</span>
-    </button>
+  <h2>Como usar</h2>
+  <div style="font-size:11px;color:#8696a0;line-height:1.7">
+    <div>💬 <b style="color:#e9edef">Chat</b> — Lista de conversas com busca</div>
+    <div>📌 <b style="color:#e9edef">Funil</b> — Clique em "📌 Funil" em qualquer conversa</div>
+    <div>📋 <b style="color:#e9edef">Kanban</b> — Arraste cards entre colunas</div>
+    <div>⚙️ <b style="color:#e9edef">Colunas</b> — Adicione, edite ou exclua pelo funil</div>
   </div>
 </div>
 
-<div class="section" style="border-bottom: none;">
-  <div class="info-box">
-    <strong>Como usar:</strong> Abra o <strong>WhatsApp Web</strong> e o CRM aparecerá automaticamente. Use os botões acima para navegar entre as seções.
-  </div>
-</div>
+<div class="footer">v4.0 — Ramon Pacheco Advocacia</div>
 
-<script>
-chrome.tabs.query({active:true, currentWindow:true}, (tabs) => {
-  const tab = tabs[0];
-  const isWA = tab?.url?.includes('web.whatsapp.com');
-  document.getElementById('status-text').textContent = isWA ? 'Ativo no WhatsApp Web' : 'Abra o WhatsApp Web';
-  document.getElementById('status-text').style.color = isWA ? '#25D366' : '#FFC107';
-});
-
-document.getElementById('btn-toggle').addEventListener('click', () => {
-  chrome.tabs.query({active:true, currentWindow:true}, (tabs) => {
-    chrome.tabs.sendMessage(tabs[0].id, {action:'togglePanel'});
-  });
-});
-
-document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    chrome.tabs.query({active:true, currentWindow:true}, (tabs) => {
-      chrome.tabs.sendMessage(tabs[0].id, {action:'navigate', view: btn.dataset.view});
-      window.close();
-    });
-  });
-});
-</script>
 </body>
 </html>
