@@ -1,566 +1,453 @@
-// CRM WALEADS-Style v3.0 - Ramon Pacheco Advocacia
-// Layout: Sidebar fina esquerda + Topbar com abas de funil + WhatsApp intacto
+// CRM Funil - Ramon Pacheco Advocacia v4.0
+// Apenas: Chat WhatsApp + Funil Kanban funcional
 (function() {
 'use strict';
 
-const STORAGE_KEY = 'crm_adv_v3';
+const STORAGE_KEY = 'crm_funil_v4';
+
 let state = {
   columns: [
-    {id:'col1', label:'Recentes', color:'#25D366', fixed:true},
-    {id:'col2', label:'Backlog', color:'#8696a0'},
-    {id:'col3', label:'Prioridade', color:'#FFC107'},
-    {id:'col4', label:'Em Execução', color:'#2196F3'},
-    {id:'col5', label:'Aguardando Terceiros', color:'#FF9800'},
-    {id:'col6', label:'Revisão', color:'#9C27B0'},
-    {id:'col7', label:'Concluído', color:'#4CAF50'}
+    {id:'col1', label:'Backlog', color:'#8696a0'},
+    {id:'col2', label:'Prioridade', color:'#FFC107'},
+    {id:'col3', label:'Em Andamento', color:'#2196F3'},
+    {id:'col4', label:'Aguardando', color:'#FF9800'},
+    {id:'col5', label:'Concluido', color:'#4CAF50'}
   ],
-  cards: {},
-  automations: [],
-  appointments: [],
-  activeTab: 'col1',
-  activeSidePanel: null
+  cards: {}
 };
+
+function saveState() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e){}
+}
 
 function loadState() {
   try {
     const s = localStorage.getItem(STORAGE_KEY);
-    if (s) { const p = JSON.parse(s); Object.assign(state, p); }
-  } catch(e) {}
+    if (s) {
+      const parsed = JSON.parse(s);
+      if (parsed.columns) state.columns = parsed.columns;
+      if (parsed.cards) state.cards = parsed.cards;
+    }
+  } catch(e){}
 }
-function saveState() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+
+function genId() {
+  return 'c' + Date.now() + Math.random().toString(36).substr(2,5);
 }
-loadState();
 
-// ==================== BUILD LAYOUT ====================
-function buildLayout() {
-  if (document.getElementById('crm-sidebar')) return;
-
-  // 1. Sidebar esquerda fina
-  const sidebar = document.createElement('div');
-  sidebar.id = 'crm-sidebar';
-  sidebar.innerHTML = `
-    <div class="crm-sb-logo" title="CRM Advocacia">⚖️</div>
-    <nav class="crm-sb-nav">
-      <button class="crm-sb-btn active" data-panel="chats" title="Chats">
-        <span class="crm-sb-icon">💬</span>
-        <span class="crm-sb-label">Chats</span>
-      </button>
-      <button class="crm-sb-btn" data-panel="funnel" title="Funil">
-        <span class="crm-sb-icon">📋</span>
-        <span class="crm-sb-label">Funil</span>
-      </button>
-      <button class="crm-sb-btn" data-panel="agenda" title="Agenda">
-        <span class="crm-sb-icon">📅</span>
-        <span class="crm-sb-label">Agenda</span>
-      </button>
-      <button class="crm-sb-btn" data-panel="automation" title="Automação">
-        <span class="crm-sb-icon">⚡</span>
-        <span class="crm-sb-label">Automação</span>
-      </button>
-      <button class="crm-sb-btn" data-panel="reports" title="Relatórios">
-        <span class="crm-sb-icon">📊</span>
-        <span class="crm-sb-label">Relatórios</span>
-      </button>
-    </nav>
-    <div class="crm-sb-bottom">
-      <button class="crm-sb-btn" id="crm-sb-settings" title="Configurações">
-        <span class="crm-sb-icon">⚙️</span>
-      </button>
-    </div>
-  `;
-  document.body.prepend(sidebar);
-
-  // 2. Topbar com abas de funil (só aparece quando "Chats" está ativo)
-  const topbar = document.createElement('div');
-  topbar.id = 'crm-topbar';
-  topbar.innerHTML = buildTopbarHTML();
-  document.body.insertBefore(topbar, document.body.firstChild.nextSibling);
-
-  // 3. Painel lateral flutuante (Funil, Agenda, etc.)
+function createPanel() {
+  if (document.getElementById('crm-funil-panel')) return;
   const panel = document.createElement('div');
-  panel.id = 'crm-side-panel';
-  panel.innerHTML = '<div id="crm-panel-content"></div>';
-  document.body.appendChild(panel);
-
-  // Push WhatsApp content to the right
-  pushWhatsAppContent();
-  attachSidebarEvents();
-  attachTopbarEvents();
-}
-
-function pushWhatsAppContent() {
-  const waApp = document.getElementById('app') || document.querySelector('[data-testid="default-user"]')?.closest('div');
-  // We use CSS to push everything via margin-left on #app
-}
-
-function buildTopbarHTML() {
-  const cols = state.columns;
-  const cards = Object.values(state.cards);
-  let tabs = '';
-  cols.forEach(col => {
-    const count = cards.filter(c => c.colId === col.id).length;
-    const isActive = state.activeTab === col.id;
-    tabs += `<button class="crm-tab ${isActive?'active':''}" data-colid="${col.id}">
-      ${col.fixed ? '' : ''}
-      <span class="crm-tab-label">${col.label}</span>
-      <span class="crm-tab-count ${count>0?'has-count':''}">${count}</span>
-    </button>`;
-  });
-  return `
-    <div class="crm-topbar-left">
-      <div class="crm-funnel-selector">
-        <select id="crm-funnel-select">
-          <option>Padrão</option>
-        </select>
+  panel.id = 'crm-funil-panel';
+  panel.innerHTML = `
+    <div id="crm-header">
+      <span id="crm-logo">⚖️</span>
+      <span id="crm-title">CRM Advocacia</span>
+      <div id="crm-header-btns">
+        <button id="crm-btn-chat" class="crm-tab-btn active" title="Conversas">💬</button>
+        <button id="crm-btn-funil" class="crm-tab-btn" title="Funil Kanban">📋</button>
       </div>
-      <div class="crm-tabs-wrap">
-        <div class="crm-tabs" id="crm-tabs">${tabs}</div>
-      </div>
-      <button class="crm-tab-add" id="crm-add-column" title="Nova Coluna">+</button>
     </div>
-    <div class="crm-topbar-right">
-      <button class="crm-btn-red" id="crm-upgrade-btn">🔔 Adquirir plano</button>
+    <div id="crm-body">
+      <div id="crm-view-chat" class="crm-view active"></div>
+      <div id="crm-view-funil" class="crm-view"></div>
     </div>
   `;
+  document.body.appendChild(panel);
+  document.getElementById('crm-btn-chat').addEventListener('click', () => switchView('chat'));
+  document.getElementById('crm-btn-funil').addEventListener('click', () => switchView('funil'));
+  buildChatView();
+  buildFunilView();
 }
 
-// ==================== EVENTS ====================
-function attachSidebarEvents() {
-  document.querySelectorAll('.crm-sb-btn[data-panel]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const panel = btn.dataset.panel;
-      document.querySelectorAll('.crm-sb-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      
-      if (panel === 'chats') {
-        // Hide side panel, show topbar — WhatsApp normal
-        document.getElementById('crm-side-panel').classList.remove('open');
-        document.getElementById('crm-topbar').style.display = 'flex';
-        state.activeSidePanel = null;
-      } else {
-        // Show side panel with selected module
-        document.getElementById('crm-topbar').style.display = 'flex';
-        openSidePanel(panel);
-        state.activeSidePanel = panel;
-      }
-    });
-  });
-}
-
-function attachTopbarEvents() {
-  document.getElementById('crm-tabs')?.addEventListener('click', e => {
-    const btn = e.target.closest('.crm-tab');
-    if (!btn) return;
-    state.activeTab = btn.dataset.colid;
-    document.querySelectorAll('.crm-tab').forEach(t => t.classList.remove('active'));
-    btn.classList.add('active');
-    // If funnel panel is open, refresh it
-    if (state.activeSidePanel === 'funnel') renderFunnelPanel();
-  });
-
-  document.getElementById('crm-add-column')?.addEventListener('click', openColumnModal);
-}
-
-// ==================== SIDE PANEL ====================
-function openSidePanel(type) {
-  const panel = document.getElementById('crm-side-panel');
-  const content = document.getElementById('crm-panel-content');
-  panel.classList.add('open');
-  
-  switch(type) {
-    case 'funnel': renderFunnelPanel(); break;
-    case 'agenda': renderAgendaPanel(); break;
-    case 'automation': renderAutoPanel(); break;
-    case 'reports': renderReportsPanel(); break;
+function switchView(view) {
+  document.querySelectorAll('.crm-view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.crm-tab-btn').forEach(b => b.classList.remove('active'));
+  if (view === 'chat') {
+    document.getElementById('crm-view-chat').classList.add('active');
+    document.getElementById('crm-btn-chat').classList.add('active');
+  } else {
+    document.getElementById('crm-view-funil').classList.add('active');
+    document.getElementById('crm-btn-funil').classList.add('active');
+    renderFunil();
   }
 }
 
-// ==================== FUNNEL PANEL ====================
-function renderFunnelPanel() {
-  const content = document.getElementById('crm-panel-content');
-  const activeCol = state.columns.find(c => c.id === state.activeTab) || state.columns[0];
-  const cards = Object.values(state.cards).filter(c => c.colId === (activeCol?.id));
-  
-  content.innerHTML = `
-    <div class="crm-panel-header">
-      <span class="crm-panel-title" style="border-left: 3px solid ${activeCol?.color||'#25D366'}; padding-left: 8px;">
-        ${activeCol?.label || 'Funil'}
-      </span>
-      <div class="crm-panel-actions">
-        <button class="crm-btn-primary" id="fp-add-card">+ Novo Lead</button>
-        <button class="crm-panel-close" id="fp-close">✕</button>
+function buildChatView() {
+  const chatView = document.getElementById('crm-view-chat');
+  chatView.innerHTML = `
+    <div id="crm-chat-search">
+      <input id="crm-search-input" type="text" placeholder="Buscar conversa..." />
+    </div>
+    <div id="crm-contacts-list"></div>
+  `;
+  document.getElementById('crm-search-input').addEventListener('input', function() {
+    filterContacts(this.value.toLowerCase());
+  });
+  loadContacts();
+}
+
+function loadContacts() {
+  const list = document.getElementById('crm-contacts-list');
+  if (!list) return;
+  const waContacts = document.querySelectorAll('[data-testid="cell-frame-container"]');
+  const contacts = [];
+  waContacts.forEach(el => {
+    const nameEl = el.querySelector('[data-testid="cell-frame-title"] span, ._ao3e');
+    const msgEl = el.querySelector('[data-testid="last-msg-status"] ~ span, .lhggkp3q');
+    const timeEl = el.querySelector('[data-testid="cell-frame-secondary-detail"] span');
+    const badgeEl = el.querySelector('[data-testid="icon-unread-count"]');
+    if (!nameEl) return;
+    const name = (nameEl.innerText || nameEl.textContent || '').trim();
+    if (!name) return;
+    const msg = msgEl ? (msgEl.innerText || msgEl.textContent || '') : '';
+    const time = timeEl ? (timeEl.innerText || timeEl.textContent || '') : '';
+    const unread = badgeEl ? parseInt(badgeEl.innerText || '0') : 0;
+    const card = state.cards[name];
+    const col = card ? state.columns.find(c => c.id === card.column) : null;
+    contacts.push({ name, msg, time, unread, el, col, note: card ? card.note : '' });
+  });
+  list.innerHTML = '';
+  if (contacts.length === 0) {
+    list.innerHTML = '<div class="crm-empty">Abra o WhatsApp Web para ver conversas</div>';
+    return;
+  }
+  contacts.forEach(c => {
+    const item = document.createElement('div');
+    item.className = 'crm-contact-item';
+    item.dataset.name = c.name.toLowerCase();
+    const colBadge = c.col ? `<span class="crm-col-badge" style="background:${c.col.color}">${c.col.label}</span>` : '';
+    const unreadBadge = c.unread > 0 ? `<span class="crm-unread-badge">${c.unread}</span>` : '';
+    item.innerHTML = `
+      <div class="crm-contact-avatar">${c.name.charAt(0).toUpperCase()}</div>
+      <div class="crm-contact-info">
+        <div class="crm-contact-top">
+          <span class="crm-contact-name">${c.name}</span>
+          <span class="crm-contact-time">${c.time}</span>
+        </div>
+        <div class="crm-contact-bottom">
+          <span class="crm-contact-msg">${c.msg.substring(0,40)}${c.msg.length>40?'...':''}</span>
+          ${unreadBadge}
+        </div>
+        <div class="crm-contact-tags">
+          ${colBadge}
+          <button class="crm-btn-assign" data-key="${c.name}" title="Mover para coluna do funil">📌 Funil</button>
+        </div>
+      </div>
+    `;
+    item.addEventListener('click', function(e) {
+      if (e.target.closest('.crm-btn-assign')) return;
+      c.el.click();
+    });
+    item.querySelector('.crm-btn-assign').addEventListener('click', function(e) {
+      e.stopPropagation();
+      openAssignModal(c.name);
+    });
+    list.appendChild(item);
+  });
+}
+
+function filterContacts(query) {
+  document.querySelectorAll('.crm-contact-item').forEach(item => {
+    item.style.display = (item.dataset.name || '').includes(query) ? '' : 'none';
+  });
+}
+
+function openAssignModal(cardKey) {
+  let modal = document.getElementById('crm-assign-modal');
+  if (modal) modal.remove();
+  const card = state.cards[cardKey] || {};
+  const colOptions = state.columns.map(c =>
+    `<label class="crm-col-option${card.column === c.id ? ' selected' : ''}" data-col="${c.id}">
+      <span class="crm-col-dot" style="background:${c.color}"></span>
+      <span>${c.label}</span>
+      ${card.column === c.id ? '<span class="crm-check">✓</span>' : ''}
+    </label>`
+  ).join('');
+  modal = document.createElement('div');
+  modal.id = 'crm-assign-modal';
+  modal.innerHTML = `
+    <div id="crm-modal-overlay"></div>
+    <div id="crm-modal-box">
+      <div id="crm-modal-header">
+        <strong>📌 Classificar: ${cardKey}</strong>
+        <button id="crm-modal-close">✕</button>
+      </div>
+      <div id="crm-modal-cols">${colOptions}</div>
+      <div id="crm-modal-note-area">
+        <textarea id="crm-modal-note" placeholder="Observação / motivo (opcional)...">${card.note || ''}</textarea>
+      </div>
+      <div id="crm-modal-footer">
+        <button id="crm-modal-clear" class="crm-btn-secondary">🗑️ Remover do funil</button>
+        <button id="crm-modal-save" class="crm-btn-primary">💾 Salvar</button>
       </div>
     </div>
-    <div class="crm-panel-body">
-      ${cards.length ? cards.map(c => renderCardHTML(c)).join('') : `
-        <div class="crm-panel-empty">
-          <div style="font-size:32px;margin-bottom:8px">📋</div>
-          <p>Nenhum lead em <b>${activeCol?.label}</b></p>
-          <button class="crm-btn-primary" id="fp-add-empty">+ Adicionar Lead</button>
+  `;
+  document.body.appendChild(modal);
+  let selectedCol = card.column || null;
+  modal.querySelectorAll('.crm-col-option').forEach(opt => {
+    opt.addEventListener('click', function() {
+      modal.querySelectorAll('.crm-col-option').forEach(o => o.classList.remove('selected'));
+      this.classList.add('selected');
+      selectedCol = this.dataset.col;
+    });
+  });
+  document.getElementById('crm-modal-close').addEventListener('click', () => modal.remove());
+  document.getElementById('crm-modal-overlay').addEventListener('click', () => modal.remove());
+  document.getElementById('crm-modal-clear').addEventListener('click', function() {
+    delete state.cards[cardKey];
+    saveState();
+    modal.remove();
+    loadContacts();
+  });
+  document.getElementById('crm-modal-save').addEventListener('click', function() {
+    const note = document.getElementById('crm-modal-note').value.trim();
+    if (!selectedCol) { alert('Selecione uma coluna do funil'); return; }
+    state.cards[cardKey] = {
+      column: selectedCol,
+      note: note,
+      name: cardKey,
+      updatedAt: new Date().toLocaleString('pt-BR')
+    };
+    saveState();
+    modal.remove();
+    loadContacts();
+  });
+}
+
+function buildFunilView() {
+  const funilView = document.getElementById('crm-view-funil');
+  funilView.innerHTML = `
+    <div id="crm-funil-toolbar">
+      <span id="crm-funil-title">📋 Funil de Leads</span>
+      <button id="crm-btn-new-col">+ Coluna</button>
+      <button id="crm-btn-refresh-funil">↻</button>
+    </div>
+    <div id="crm-kanban-board"></div>
+  `;
+  document.getElementById('crm-btn-new-col').addEventListener('click', () => openColumnModal(null));
+  document.getElementById('crm-btn-refresh-funil').addEventListener('click', () => { loadContacts(); renderFunil(); });
+  renderFunil();
+}
+
+function renderFunil() {
+  const board = document.getElementById('crm-kanban-board');
+  if (!board) return;
+  board.innerHTML = '';
+  state.columns.forEach(col => {
+    const cardsInCol = Object.entries(state.cards).filter(([k,v]) => v.column === col.id);
+    const colEl = document.createElement('div');
+    colEl.className = 'crm-kanban-col';
+    colEl.dataset.colId = col.id;
+    colEl.innerHTML = `
+      <div class="crm-kanban-col-header" style="border-top:3px solid ${col.color}">
+        <div class="crm-kanban-col-title">
+          <span class="crm-kanban-col-dot" style="background:${col.color}"></span>
+          <span class="crm-kanban-col-label">${col.label}</span>
+          <span class="crm-kanban-col-count">${cardsInCol.length}</span>
         </div>
-      `}
+        <div class="crm-kanban-col-actions">
+          <button class="crm-col-edit-btn" data-col="${col.id}">✏️</button>
+          <button class="crm-col-del-btn" data-col="${col.id}">🗑️</button>
+        </div>
+      </div>
+      <div class="crm-kanban-cards" data-col="${col.id}"></div>
+    `;
+    const cardsContainer = colEl.querySelector('.crm-kanban-cards');
+    cardsInCol.forEach(([cardKey, cardData]) => {
+      const cardEl = document.createElement('div');
+      cardEl.className = 'crm-kanban-card';
+      cardEl.draggable = true;
+      cardEl.dataset.card = cardKey;
+      const initials = cardKey.split(' ').map(w=>w[0]||'').join('').substring(0,2).toUpperCase();
+      cardEl.innerHTML = `
+        <div class="crm-card-top">
+          <div class="crm-card-avatar" style="background:${col.color}33;color:${col.color}">${initials}</div>
+          <div class="crm-card-info">
+            <div class="crm-card-name">${cardKey}</div>
+            <div class="crm-card-time">${cardData.updatedAt || ''}</div>
+          </div>
+          <button class="crm-card-menu-btn" data-card="${cardKey}">✏️</button>
+        </div>
+        ${cardData.note ? `<div class="crm-card-note">${cardData.note}</div>` : ''}
+      `;
+      cardEl.addEventListener('dragstart', function(e) {
+        dragCard = this.dataset.card;
+        this.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      cardEl.addEventListener('dragend', function() {
+        this.classList.remove('dragging');
+        document.querySelectorAll('.crm-kanban-col.drag-over').forEach(c => c.classList.remove('drag-over'));
+      });
+      cardEl.querySelector('.crm-card-menu-btn').addEventListener('click', function(e) {
+        e.stopPropagation();
+        openAssignModal(cardKey);
+      });
+      cardEl.addEventListener('click', function(e) {
+        if (e.target.closest('.crm-card-menu-btn')) return;
+        const wa = findWAContact(cardKey);
+        if (wa) { wa.click(); switchView('chat'); }
+      });
+      cardsContainer.appendChild(cardEl);
+    });
+    if (cardsInCol.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'crm-kanban-empty';
+      empty.textContent = 'Nenhum lead aqui';
+      cardsContainer.appendChild(empty);
+    }
+    cardsContainer.addEventListener('dragover', function(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      this.closest('.crm-kanban-col').classList.add('drag-over');
+    });
+    cardsContainer.addEventListener('dragleave', function() {
+      this.closest('.crm-kanban-col').classList.remove('drag-over');
+    });
+    cardsContainer.addEventListener('drop', function(e) {
+      e.preventDefault();
+      const colId = this.dataset.col;
+      this.closest('.crm-kanban-col').classList.remove('drag-over');
+      if (!dragCard || !colId) return;
+      if (state.cards[dragCard]) {
+        state.cards[dragCard].column = colId;
+        state.cards[dragCard].updatedAt = new Date().toLocaleString('pt-BR');
+        saveState();
+        renderFunil();
+      }
+    });
+    colEl.querySelector('.crm-col-edit-btn').addEventListener('click', function() {
+      const c = state.columns.find(x => x.id === col.id);
+      if (c) openColumnModal(c);
+    });
+    colEl.querySelector('.crm-col-del-btn').addEventListener('click', function() {
+      const cardsCount = Object.values(state.cards).filter(c => c.column === col.id).length;
+      const msg = cardsCount > 0
+        ? `Excluir "${col.label}"? Os ${cardsCount} lead(s) tambem serao removidos.`
+        : `Excluir a coluna "${col.label}"?`;
+      if (!confirm(msg)) return;
+      state.columns = state.columns.filter(c => c.id !== col.id);
+      Object.keys(state.cards).forEach(k => {
+        if (state.cards[k].column === col.id) delete state.cards[k];
+      });
+      saveState();
+      renderFunil();
+    });
+    board.appendChild(colEl);
+  });
+}
+
+let dragCard = null;
+
+function findWAContact(name) {
+  for (let el of document.querySelectorAll('[data-testid="cell-frame-container"]')) {
+    const nameEl = el.querySelector('[data-testid="cell-frame-title"] span, ._ao3e');
+    if (nameEl && (nameEl.innerText || nameEl.textContent || '').trim() === name) return el;
+  }
+  return null;
+}
+
+function openColumnModal(col) {
+  let modal = document.getElementById('crm-col-modal');
+  if (modal) modal.remove();
+  const isEdit = !!col;
+  const colors = ['#8696a0','#FFC107','#2196F3','#FF9800','#4CAF50','#E91E63','#9C27B0','#F44336','#00BCD4','#795548'];
+  modal = document.createElement('div');
+  modal.id = 'crm-col-modal';
+  modal.innerHTML = `
+    <div id="crm-modal-overlay"></div>
+    <div id="crm-modal-box">
+      <div id="crm-modal-header">
+        <strong>${isEdit ? 'Editar Coluna' : 'Nova Coluna'}</strong>
+        <button id="crm-col-modal-close">✕</button>
+      </div>
+      <div style="padding:16px">
+        <label class="crm-form-label">Nome da coluna</label>
+        <input id="crm-col-name" type="text" placeholder="Ex: Proposta Enviada" value="${isEdit ? col.label : ''}" class="crm-form-input" />
+        <label class="crm-form-label" style="margin-top:12px">Cor</label>
+        <div id="crm-col-colors" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          ${colors.map(c => `<div class="crm-color-pick${isEdit && col.color===c?' active':''}" data-color="${c}" style="background:${c};width:26px;height:26px;border-radius:50%;cursor:pointer;border:2px solid ${isEdit && col.color===c?'#fff':'transparent'}"></div>`).join('')}
+        </div>
+      </div>
+      <div id="crm-modal-footer">
+        <button id="crm-col-modal-cancel" class="crm-btn-secondary">Cancelar</button>
+        <button id="crm-col-modal-save" class="crm-btn-primary">Salvar</button>
+      </div>
     </div>
   `;
-  
-  content.querySelector('#fp-close')?.addEventListener('click', () => {
-    document.getElementById('crm-side-panel').classList.remove('open');
-    // Return to chats
-    document.querySelectorAll('.crm-sb-btn').forEach(b => b.classList.remove('active'));
-    document.querySelector('.crm-sb-btn[data-panel="chats"]').classList.add('active');
-    state.activeSidePanel = null;
-  });
-  content.querySelector('#fp-add-card')?.addEventListener('click', () => openCardModal(null, activeCol?.id));
-  content.querySelector('#fp-add-empty')?.addEventListener('click', () => openCardModal(null, activeCol?.id));
-  
-  content.querySelectorAll('.crm-card-item').forEach(card => {
-    card.querySelector('.crm-card-edit-btn')?.addEventListener('click', e => {
-      e.stopPropagation();
-      openCardModal(card.dataset.cardid);
+  document.body.appendChild(modal);
+  let selectedColor = isEdit ? col.color : colors[0];
+  modal.querySelectorAll('.crm-color-pick').forEach(cp => {
+    cp.addEventListener('click', function() {
+      modal.querySelectorAll('.crm-color-pick').forEach(x => x.style.border='2px solid transparent');
+      this.style.border = '2px solid #fff';
+      selectedColor = this.dataset.color;
     });
-    card.querySelector('.crm-card-wa-btn')?.addEventListener('click', e => {
-      e.stopPropagation();
-      const phone = card.dataset.phone?.replace(/\D/g,'');
-      if (phone) {
-        // Click on WhatsApp search and open chat
-        const searchInput = document.querySelector('[data-testid="chat-list-search"]');
-        if (searchInput) {
-          searchInput.focus();
-          const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-          nativeInputValueSetter.call(searchInput, phone);
-          searchInput.dispatchEvent(new Event('input', {bubbles:true}));
+  });
+  document.getElementById('crm-col-modal-close').addEventListener('click', () => modal.remove());
+  document.getElementById('crm-col-modal-cancel').addEventListener('click', () => modal.remove());
+  document.getElementById('crm-modal-overlay').addEventListener('click', () => modal.remove());
+  document.getElementById('crm-col-modal-save').addEventListener('click', function() {
+    const name = document.getElementById('crm-col-name').value.trim();
+    if (!name) { alert('Digite o nome da coluna'); return; }
+    if (isEdit) {
+      col.label = name;
+      col.color = selectedColor;
+    } else {
+      state.columns.push({ id: genId(), label: name, color: selectedColor });
+    }
+    saveState();
+    modal.remove();
+    renderFunil();
+  });
+}
+
+function injectBadgesOnWA() {
+  document.querySelectorAll('[data-testid="cell-frame-container"]').forEach(el => {
+    const nameEl = el.querySelector('[data-testid="cell-frame-title"] span, ._ao3e');
+    if (!nameEl) return;
+    const name = (nameEl.innerText || nameEl.textContent || '').trim();
+    if (!name) return;
+    const card = state.cards[name];
+    const existing = el.querySelector('.crm-wa-badge');
+    if (card) {
+      const c = state.columns.find(x => x.id === card.column);
+      if (c) {
+        if (existing) {
+          existing.textContent = c.label;
+          existing.style.background = c.color;
+        } else {
+          const badge = document.createElement('span');
+          badge.className = 'crm-wa-badge';
+          badge.textContent = c.label;
+          badge.style.cssText = `background:${c.color};color:#fff;font-size:10px;padding:2px 6px;border-radius:10px;margin-left:6px;vertical-align:middle;font-family:sans-serif;pointer-events:none`;
+          if (nameEl.parentNode) nameEl.parentNode.appendChild(badge);
         }
       }
-    });
-  });
-}
-
-function renderCardHTML(card) {
-  return `<div class="crm-card-item" data-cardid="${card.id}" data-phone="${card.phone||''}">
-    <div class="crm-card-item-header">
-      <span class="crm-card-item-name">${card.name}</span>
-      <div class="crm-card-item-btns">
-        ${card.phone ? `<button class="crm-card-wa-btn" title="Abrir no WhatsApp">💬</button>` : ''}
-        <button class="crm-card-edit-btn" title="Editar">✏️</button>
-      </div>
-    </div>
-    ${card.phone ? `<div class="crm-card-item-phone">📱 ${card.phone}</div>` : ''}
-    ${card.value ? `<div class="crm-card-item-value">💰 R$ ${card.value}</div>` : ''}
-    ${card.tag ? `<span class="crm-card-item-tag" style="background:${card.tagColor||'#25D366'}">${card.tag}</span>` : ''}
-    <div class="crm-card-item-col">
-      <label style="font-size:10px;color:#8696a0">Mover para:</label>
-      <select class="crm-card-move-select" data-cardid="${card.id}">
-        ${state.columns.map(c => `<option value="${c.id}" ${c.id===card.colId?'selected':''}>${c.label}</option>`).join('')}
-      </select>
-    </div>
-    ${card.notes ? `<div class="crm-card-item-notes">${card.notes}</div>` : ''}
-  </div>`;
-}
-
-// ==================== AGENDA PANEL ====================
-function renderAgendaPanel() {
-  const content = document.getElementById('crm-panel-content');
-  const appts = [...state.appointments].sort((a,b) => new Date(a.datetime)-new Date(b.datetime));
-  content.innerHTML = `
-    <div class="crm-panel-header">
-      <span class="crm-panel-title">📅 Agenda</span>
-      <div class="crm-panel-actions">
-        <button class="crm-btn-primary" id="ag-new">+ Compromisso</button>
-        <button class="crm-panel-close" id="ag-close">✕</button>
-      </div>
-    </div>
-    <div class="crm-panel-body">
-      ${appts.length ? appts.map(a => `
-        <div class="crm-appt-item">
-          <div class="crm-appt-color" style="background:${a.color||'#25D366'}"></div>
-          <div class="crm-appt-info">
-            <div class="crm-appt-title">${a.title}</div>
-            <div class="crm-appt-time">${new Date(a.datetime).toLocaleString('pt-BR')}</div>
-            ${a.contact ? `<div class="crm-appt-contact">👤 ${a.contact}</div>` : ''}
-          </div>
-          <button class="crm-appt-del" data-id="${a.id}">✕</button>
-        </div>
-      `).join('') : '<div class="crm-panel-empty"><div style="font-size:32px">📅</div><p>Nenhum compromisso</p></div>'}
-    </div>
-  `;
-  content.querySelector('#ag-close')?.addEventListener('click', closeSidePanel);
-  content.querySelector('#ag-new')?.addEventListener('click', openAgendaModal);
-  content.querySelectorAll('.crm-appt-del').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.appointments = state.appointments.filter(a => a.id !== btn.dataset.id);
-      saveState(); renderAgendaPanel();
-    });
-  });
-}
-
-// ==================== AUTOMATION PANEL ====================
-function renderAutoPanel() {
-  const content = document.getElementById('crm-panel-content');
-  content.innerHTML = `
-    <div class="crm-panel-header">
-      <span class="crm-panel-title">⚡ Automações</span>
-      <div class="crm-panel-actions">
-        <button class="crm-btn-primary" id="auto-new">+ Nova</button>
-        <button class="crm-panel-close" id="auto-close">✕</button>
-      </div>
-    </div>
-    <div class="crm-panel-body">
-      ${state.automations.length ? state.automations.map(a => `
-        <div class="crm-auto-row">
-          <label class="crm-switch"><input type="checkbox" ${a.active?'checked':''} data-id="${a.id}"><span class="crm-slider"></span></label>
-          <div class="crm-auto-info">
-            <div class="crm-auto-name">${a.name}</div>
-            <div class="crm-auto-rule">${a.trigger} → ${a.action}</div>
-          </div>
-          <button class="crm-auto-del" data-id="${a.id}">🗑️</button>
-        </div>
-      `).join('') : '<div class="crm-panel-empty"><div style="font-size:32px">⚡</div><p>Nenhuma automação</p></div>'}
-    </div>
-  `;
-  content.querySelector('#auto-close')?.addEventListener('click', closeSidePanel);
-  content.querySelector('#auto-new')?.addEventListener('click', openAutoModal);
-  content.querySelectorAll('[data-id]').forEach(el => {
-    if (el.type === 'checkbox') {
-      el.addEventListener('change', () => {
-        const a = state.automations.find(x => x.id === el.dataset.id);
-        if (a) { a.active = el.checked; saveState(); }
-      });
-    } else if (el.classList.contains('crm-auto-del')) {
-      el.addEventListener('click', () => {
-        state.automations = state.automations.filter(x => x.id !== el.dataset.id);
-        saveState(); renderAutoPanel();
-      });
+    } else if (existing) {
+      existing.remove();
     }
   });
 }
 
-// ==================== REPORTS PANEL ====================
-function renderReportsPanel() {
-  const content = document.getElementById('crm-panel-content');
-  const cards = Object.values(state.cards);
-  const total = cards.length;
-  const totalVal = cards.reduce((s,c) => s + (parseFloat((c.value||'0').replace(',','.')) || 0), 0);
-  const byCol = {};
-  state.columns.forEach(c => { byCol[c.id] = {label:c.label, count:0, value:0, color:c.color}; });
-  cards.forEach(c => { if(byCol[c.colId]) { byCol[c.colId].count++; byCol[c.colId].value += parseFloat((c.value||'0').replace(',','.')) || 0; } });
-  
-  content.innerHTML = `
-    <div class="crm-panel-header">
-      <span class="crm-panel-title">📊 Relatórios</span>
-      <div class="crm-panel-actions">
-        <button class="crm-panel-close" id="rep-close">✕</button>
-      </div>
-    </div>
-    <div class="crm-panel-body">
-      <div class="crm-metrics-row">
-        <div class="crm-metric"><div class="crm-metric-val">${total}</div><div class="crm-metric-lbl">Leads</div></div>
-        <div class="crm-metric"><div class="crm-metric-val">R$ ${totalVal.toLocaleString('pt-BR',{minimumFractionDigits:2})}</div><div class="crm-metric-lbl">Valor Total</div></div>
-        <div class="crm-metric"><div class="crm-metric-val">${state.appointments.length}</div><div class="crm-metric-lbl">Compromissos</div></div>
-      </div>
-      <div class="crm-report-bars">
-        ${Object.values(byCol).map(c => `
-          <div class="crm-rbar-row">
-            <span class="crm-rbar-label">${c.label}</span>
-            <div class="crm-rbar-wrap"><div class="crm-rbar-fill" style="width:${total?Math.round(c.count/total*100):0}%;background:${c.color}"></div></div>
-            <span class="crm-rbar-num">${c.count}</span>
-          </div>
-        `).join('')}
-      </div>
-    </div>
-  `;
-  content.querySelector('#rep-close')?.addEventListener('click', closeSidePanel);
-}
-
-function closeSidePanel() {
-  document.getElementById('crm-side-panel').classList.remove('open');
-  document.querySelectorAll('.crm-sb-btn').forEach(b => b.classList.remove('active'));
-  document.querySelector('.crm-sb-btn[data-panel="chats"]').classList.add('active');
-  state.activeSidePanel = null;
-}
-
-// ==================== MODALS ====================
-function createModal(html) {
-  const overlay = document.createElement('div');
-  overlay.className = 'crm-modal-overlay';
-  overlay.innerHTML = `<div class="crm-modal">${html}</div>`;
-  document.body.appendChild(overlay);
-  overlay.querySelectorAll('.crm-modal-close').forEach(b => b.addEventListener('click', () => overlay.remove()));
-  overlay.addEventListener('click', e => { if(e.target===overlay) overlay.remove(); });
-  return overlay;
-}
-
-function openCardModal(cardId, colId) {
-  const card = cardId ? state.cards[cardId] : null;
-  const modal = createModal(`
-    <div class="crm-modal-hdr"><h3>${card?'Editar Lead':'Novo Lead'}</h3><button class="crm-modal-close">✕</button></div>
-    <div class="crm-modal-bdy">
-      <label>Nome *</label><input id="cm-name" value="${card?.name||''}" placeholder="Nome do contato" />
-      <label>Telefone</label><input id="cm-phone" value="${card?.phone||''}" placeholder="+55 11 99999-9999" />
-      <label>Valor (R$)</label><input id="cm-value" value="${card?.value||''}" placeholder="0,00" />
-      <label>Etiqueta</label><input id="cm-tag" value="${card?.tag||''}" placeholder="Ex: Urgente" />
-      <label>Coluna</label>
-      <select id="cm-col">${state.columns.map(c=>`<option value="${c.id}" ${(card?.colId||colId)===c.id?'selected':''}>${c.label}</option>`).join('')}</select>
-      <label>Observações</label><textarea id="cm-notes">${card?.notes||''}</textarea>
-    </div>
-    <div class="crm-modal-ftr">
-      ${card?`<button class="crm-btn-danger" id="cm-del">Excluir</button>`:''}
-      <button class="crm-modal-close crm-btn-sec">Cancelar</button>
-      <button class="crm-btn-primary" id="cm-save">Salvar</button>
-    </div>
-  `);
-  modal.querySelector('#cm-save').addEventListener('click', () => {
-    const name = modal.querySelector('#cm-name').value.trim();
-    if (!name) return alert('Nome obrigatório');
-    const id = cardId || 'card_'+Date.now();
-    state.cards[id] = { id, name,
-      phone: modal.querySelector('#cm-phone').value.trim(),
-      value: modal.querySelector('#cm-value').value.trim(),
-      tag: modal.querySelector('#cm-tag').value.trim(),
-      colId: modal.querySelector('#cm-col').value,
-      notes: modal.querySelector('#cm-notes').value.trim(),
-      tagColor: '#25D366', date: new Date().toLocaleDateString('pt-BR')
-    };
-    saveState(); modal.remove();
-    updateTopbarCounts();
-    if (state.activeSidePanel === 'funnel') renderFunnelPanel();
-  });
-  if (card) modal.querySelector('#cm-del')?.addEventListener('click', () => {
-    if(confirm('Excluir este lead?')) { delete state.cards[cardId]; saveState(); modal.remove(); updateTopbarCounts(); if(state.activeSidePanel==='funnel') renderFunnelPanel(); }
-  });
-}
-
-function openColumnModal() {
-  const modal = createModal(`
-    <div class="crm-modal-hdr"><h3>Nova Coluna</h3><button class="crm-modal-close">✕</button></div>
-    <div class="crm-modal-bdy">
-      <label>Nome *</label><input id="col-name" placeholder="Ex: Em Negociação" />
-      <label>Cor</label><input id="col-color" type="color" value="#25D366" />
-    </div>
-    <div class="crm-modal-ftr">
-      <button class="crm-modal-close crm-btn-sec">Cancelar</button>
-      <button class="crm-btn-primary" id="col-save">Criar</button>
-    </div>
-  `);
-  modal.querySelector('#col-save').addEventListener('click', () => {
-    const name = modal.querySelector('#col-name').value.trim();
-    if (!name) return;
-    state.columns.push({id:'col_'+Date.now(), label:name, color:modal.querySelector('#col-color').value, fixed:false});
-    saveState(); modal.remove(); rebuildTopbar();
-  });
-}
-
-function openAgendaModal() {
-  const modal = createModal(`
-    <div class="crm-modal-hdr"><h3>Novo Compromisso</h3><button class="crm-modal-close">✕</button></div>
-    <div class="crm-modal-bdy">
-      <label>Título *</label><input id="ag-title" placeholder="Ex: Reunião" />
-      <label>Data e Hora *</label><input id="ag-dt" type="datetime-local" />
-      <label>Contato</label><input id="ag-contact" placeholder="Nome" />
-      <label>Notas</label><textarea id="ag-notes"></textarea>
-    </div>
-    <div class="crm-modal-ftr">
-      <button class="crm-modal-close crm-btn-sec">Cancelar</button>
-      <button class="crm-btn-primary" id="ag-save">Salvar</button>
-    </div>
-  `);
-  modal.querySelector('#ag-save').addEventListener('click', () => {
-    const title = modal.querySelector('#ag-title').value.trim();
-    const dt = modal.querySelector('#ag-dt').value;
-    if(!title||!dt) return alert('Preencha título e data');
-    state.appointments.push({id:'appt_'+Date.now(), title, datetime:dt,
-      contact:modal.querySelector('#ag-contact').value.trim(),
-      notes:modal.querySelector('#ag-notes').value.trim(), color:'#25D366'});
-    saveState(); modal.remove(); renderAgendaPanel();
-  });
-}
-
-function openAutoModal() {
-  const modal = createModal(`
-    <div class="crm-modal-hdr"><h3>Nova Automação</h3><button class="crm-modal-close">✕</button></div>
-    <div class="crm-modal-bdy">
-      <label>Nome *</label><input id="auto-name" placeholder="Ex: Alerta de prioridade" />
-      <label>Gatilho</label>
-      <select id="auto-trig">
-        <option>Card movido para coluna</option>
-        <option>Novo card criado</option>
-      </select>
-      <label>Coluna alvo</label>
-      <select id="auto-col">${state.columns.map(c=>`<option>${c.label}</option>`).join('')}</select>
-      <label>Ação</label>
-      <select id="auto-act">
-        <option>Mostrar notificação</option>
-        <option>Marcar como urgente</option>
-      </select>
-    </div>
-    <div class="crm-modal-ftr">
-      <button class="crm-modal-close crm-btn-sec">Cancelar</button>
-      <button class="crm-btn-primary" id="auto-save">Salvar</button>
-    </div>
-  `);
-  modal.querySelector('#auto-save').addEventListener('click', () => {
-    const name = modal.querySelector('#auto-name').value.trim();
-    if(!name) return;
-    state.automations.push({id:'auto_'+Date.now(), name, active:true,
-      trigger:modal.querySelector('#auto-trig').value+': '+modal.querySelector('#auto-col').value,
-      action:modal.querySelector('#auto-act').value});
-    saveState(); modal.remove(); renderAutoPanel();
-  });
-}
-
-function updateTopbarCounts() {
-  const tabs = document.getElementById('crm-tabs');
-  if (!tabs) return;
-  const cards = Object.values(state.cards);
-  tabs.querySelectorAll('.crm-tab').forEach(tab => {
-    const count = cards.filter(c => c.colId === tab.dataset.colid).length;
-    const countEl = tab.querySelector('.crm-tab-count');
-    if (countEl) { countEl.textContent = count; countEl.className = 'crm-tab-count' + (count>0?' has-count':''); }
-  });
-}
-
-function rebuildTopbar() {
-  const topbar = document.getElementById('crm-topbar');
-  if (topbar) { topbar.innerHTML = buildTopbarHTML(); attachTopbarEvents(); }
-}
-
-// Add event delegation for card move select
-document.addEventListener('change', e => {
-  if (e.target.classList.contains('crm-card-move-select')) {
-    const cardId = e.target.dataset.cardid;
-    if (state.cards[cardId]) {
-      state.cards[cardId].colId = e.target.value;
-      saveState();
-      updateTopbarCounts();
-      state.activeTab = e.target.value;
-      document.querySelectorAll('.crm-tab').forEach(t => {
-        t.classList.toggle('active', t.dataset.colid === e.target.value);
-      });
-      if (state.activeSidePanel === 'funnel') renderFunnelPanel();
-    }
-  }
-});
-
-// ==================== INIT ====================
 function init() {
-  if (document.getElementById('crm-sidebar')) return;
-  buildLayout();
+  loadState();
+  createPanel();
+  injectBadgesOnWA();
+  const observer = new MutationObserver(() => {
+    injectBadgesOnWA();
+    const chatView = document.getElementById('crm-view-chat');
+    if (chatView && chatView.classList.contains('active')) loadContacts();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  setInterval(injectBadgesOnWA, 3000);
 }
 
-function waitForWA() {
-  if (document.body) {
-    setTimeout(init, 1500);
-  } else {
-    document.addEventListener('DOMContentLoaded', () => setTimeout(init, 1500));
-  }
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  setTimeout(init, 1500);
 }
-
-waitForWA();
-
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.action === 'navigate' && msg.view) {
-    const btn = document.querySelector(`.crm-sb-btn[data-panel="${msg.view}"]`);
-    if (btn) btn.click();
-  }
-});
 
 })();
